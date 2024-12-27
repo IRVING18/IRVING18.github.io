@@ -1,0 +1,194 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="light"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>线程-2-线程锁分类 | 一个通人性的博主</title><meta name="author" content="王征"><meta name="copyright" content="王征"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="ffffff"><meta name="description" content="一、按照其性质分类公平锁&#x2F;非公平锁 公平锁是指多个线程按照申请锁的顺序来获取锁。 非公平锁是指多个线程获取锁的顺序并不是按照申请锁的顺序，有可能后申请的线程比先申请的线程优先获取锁。有可能，会造成优先级反转或者饥饿现象。  对于Java ReentrantLock而言，通过构造函数指定该锁是否是公平锁，默认是非公平锁。非公平锁的优点在于吞吐量比公平锁大。对于Synchronized而言，">
+<meta property="og:type" content="article">
+<meta property="og:title" content="线程-2-线程锁分类">
+<meta property="og:url" content="https://irving18.github.io/2024/12/27/%E7%BA%BF%E7%A8%8B-2-%E7%BA%BF%E7%A8%8B%E9%94%81%E5%88%86%E7%B1%BB/index.html">
+<meta property="og:site_name" content="一个通人性的博主">
+<meta property="og:description" content="一、按照其性质分类公平锁&#x2F;非公平锁 公平锁是指多个线程按照申请锁的顺序来获取锁。 非公平锁是指多个线程获取锁的顺序并不是按照申请锁的顺序，有可能后申请的线程比先申请的线程优先获取锁。有可能，会造成优先级反转或者饥饿现象。  对于Java ReentrantLock而言，通过构造函数指定该锁是否是公平锁，默认是非公平锁。非公平锁的优点在于吞吐量比公平锁大。对于Synchronized而言，">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://irving18.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2024-12-27T03:52:19.000Z">
+<meta property="article:modified_time" content="2024-12-27T03:53:05.106Z">
+<meta property="article:author" content="王征">
+<meta property="article:tag" content="JAVA基础">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://irving18.github.io/img/avatar.jpg"><link rel="shortcut icon" href="/img/avatar.jpg"><link rel="canonical" href="https://irving18.github.io/2024/12/27/%E7%BA%BF%E7%A8%8B-2-%E7%BA%BF%E7%A8%8B%E9%94%81%E5%88%86%E7%B1%BB/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', 'ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: undefined,
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":true},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyload: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: '线程-2-线程锁分类',
+  isPost: true,
+  isHome: false,
+  isHighlightShrink: false,
+  isToc: true,
+  isShuoshuo: false
+}</script><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="onerror=null;src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">11</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">1</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">1</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 文章</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg" id="page-header" style="background-image: url(/img/bg.png);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">一个通人性的博主</span></a><a class="nav-page-title" href="/"><span class="site-name">线程-2-线程锁分类</span></a></span><div id="menus"><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 文章</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">线程-2-线程锁分类</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2024-12-27T03:52:19.000Z" title="发表于 2024-12-27 11:52:19">2024-12-27</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2024-12-27T03:53:05.106Z" title="更新于 2024-12-27 11:53:05">2024-12-27</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/JAVA/">JAVA</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">2.1k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>6分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h1 id="一、按照其性质分类"><a href="#一、按照其性质分类" class="headerlink" title="一、按照其性质分类"></a>一、按照其性质分类</h1><h2 id="公平锁-非公平锁"><a href="#公平锁-非公平锁" class="headerlink" title="公平锁&#x2F;非公平锁"></a>公平锁&#x2F;非公平锁</h2><ul>
+<li><strong>公平锁</strong>是指多个线程按照申请锁的顺序来获取锁。</li>
+<li><strong>非公平锁</strong>是指多个线程获取锁的顺序并不是按照申请锁的顺序，有可能后申请的线程比先申请的线程优先获取锁。有可能，会造成优先级反转或者饥饿现象。</li>
+</ul>
+<p>对于Java ReentrantLock而言，通过构造函数指定该锁是否是公平锁，默认是非公平锁。非公平锁的优点在于吞吐量比公平锁大。对于Synchronized而言，也是一种非公平锁。由于其并不像ReentrantLock是通过AQS的来实现线程调度，所以并没有任何办法使其变成公平锁。</p>
+<h2 id="乐观锁-悲观锁"><a href="#乐观锁-悲观锁" class="headerlink" title="乐观锁&#x2F;悲观锁"></a>乐观锁&#x2F;悲观锁</h2><p>乐观锁与悲观锁不是指具体的什么类型的锁，而是指看待并发同步的角度。</p>
+<ul>
+<li><p><strong>悲观锁</strong>认为对于同一个数据的并发操作，一定是会发生修改的，哪怕没有修改，也会认为修改。因此对于同一个数据的并发操作，悲观锁采取加锁的形式。悲观的认为，不加锁的并发操作一定会出问题。</p>
+</li>
+<li><p><strong>乐观锁</strong>则认为对于同一个数据的并发操作，是不会发生修改的。在更新数据的时候，会采用尝试更新，不断重新的方式更新数据。乐观的认为，不加锁的并发操作是没有事情的。</p>
+</li>
+</ul>
+<p>从上面的描述我们可以看出，悲观锁适合写操作非常多的场景，乐观锁适合读操作非常多的场景，不加锁会带来大量的性能提升。悲观锁在Java中的使用，就是利用各种锁。乐观锁在Java中的使用，是无锁编程，常常采用的是CAS算法，典型的例子就是原子类，通过CAS自旋实现原子操作的更新。</p>
+<h2 id="独享锁-共享锁"><a href="#独享锁-共享锁" class="headerlink" title="独享锁&#x2F;共享锁"></a>独享锁&#x2F;共享锁</h2><ul>
+<li><p><strong>独享锁</strong>是指该锁一次只能被一个线程所持有。</p>
+</li>
+<li><p><strong>共享锁</strong>是指该锁可被多个线程所持有。</p>
+</li>
+</ul>
+<p>对于Java ReentrantLock而言，其是独享锁。但是对于Lock的另一个实现类ReentrantReadWriteLock，其读锁是共享锁，其写锁是独享锁。读锁的共享锁可保证并发读是非常高效的，读写，写读 ，写写的过程是互斥的。独享锁与共享锁也是通过AQS来实现的，通过实现不同的方法，来实现独享或者共享。</p>
+<p>对于Synchronized而言，当然是独享锁。</p>
+<h2 id="互斥锁-读写锁"><a href="#互斥锁-读写锁" class="headerlink" title="互斥锁&#x2F;读写锁"></a>互斥锁&#x2F;读写锁</h2><p>上面讲的独享锁&#x2F;共享锁就是一种广义的说法，互斥锁&#x2F;读写锁就是具体的实现。互斥锁在Java中的具体实现就是ReentrantLock，读写锁在Java中的具体实现就是ReentrantReadWriteLock</p>
+<h2 id="可重入锁-不可重入锁"><a href="#可重入锁-不可重入锁" class="headerlink" title="可重入锁&#x2F;不可重入锁"></a>可重入锁&#x2F;不可重入锁</h2><ul>
+<li><strong>可重入锁</strong>又名<strong>递归锁</strong>，是指在同一个线程在外层方法获取锁的时候，在进入内层方法会自动获取锁。说的有点抽象，下面会有一个代码的示例。</li>
+</ul>
+<p>对于Java ReentrantLock而言,他的名字就可以看出是一个可重入锁，<strong>其名字是ReentrantLock重新进入锁</strong>。<strong>对于Synchronized而言,也是一个可重入锁</strong>。可重入锁的一个好处是可一定程度避免死锁。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> sychrnozied <span class="keyword">void</span> <span class="title function_">test</span><span class="params">()</span> &#123;</span><br><span class="line">    xxxxxx;</span><br><span class="line">    test2();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">public</span> sychronized <span class="keyword">void</span> <span class="title function_">test2</span><span class="params">()</span> &#123;</span><br><span class="line">    yyyyy;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>在上面代码段中，执行 test 方法需要获得当前对象作为监视器的对象锁，但方法中又调用了 test2 的同步方法。</p>
+<p>如果锁是具有可重入性的话，那么该线程在调用 test2 时并不需要再次获得当前对象的锁，可以直接进入 test2 方法进行操作。<br>如果锁是不具有可重入性的话，那么该线程在调用 test2 前会等待当前对象锁的释放，实际上该对象锁已被当前线程所持有，不可能再次获得。<br>如果锁是不具有可重入性特点的话，那么线程在调用同步方法、含有锁的方法时就会产生死锁。</p>
+<h1 id="二、按照设计方案来分类"><a href="#二、按照设计方案来分类" class="headerlink" title="二、按照设计方案来分类"></a>二、按照设计方案来分类</h1><p>锁优化里涉及到的，都在上一篇博客里提到了，大概有以下这么几种</p>
+<h2 id="自旋锁-自适应自旋锁"><a href="#自旋锁-自适应自旋锁" class="headerlink" title="自旋锁&#x2F;自适应自旋锁"></a>自旋锁&#x2F;自适应自旋锁</h2><p>在Java中，自旋锁是指尝试获取锁的线程不会立即阻塞，而是采用循环的方式去尝试获取锁，这样的好处是减少线程上下文切换的消耗，缺点是循环会消耗CPU。更多具体的细节见上一篇博客里对自旋锁的描述</p>
+<p><a target="_blank" rel="noopener" href="http://blog.csdn.net/sinat_33087001/article/details/77644441#t27">http://blog.csdn.net/sinat_33087001/article/details/77644441#t27</a></p>
+<h2 id="锁粗化-锁消除"><a href="#锁粗化-锁消除" class="headerlink" title="锁粗化&#x2F;锁消除"></a>锁粗化&#x2F;锁消除</h2><p>锁消除是指虚拟机即时编译器在运行时，对一些代码上要求同步，但是被检测到不可能存在共享数据竞争的锁进行消除。锁消除的主要判定依据来源于逃逸分析的数据支持，如果判断在一段代码中，堆上的所有数据都不会逃逸出去从而被其他线程访问到，那就可以把它们当做栈上数据对待，认为它们是线程私有的，同步加锁自然就无须进行。</p>
+<p>如果一系列的连续操作都对同一个对象反复加锁和解锁，甚至加锁操作是出现在循环体中的，那即使没有线程竞争，频繁地进行互斥同步操作也会导致不必要的性能损耗。如果虚拟机探测到有这样一串零碎的操作都对同一个对象加锁，将会把加锁同步的范围扩展（粗化）到整个操作序列的外部</p>
+<p>锁粗化和消除其实设计原理都差不多，都是为了减少没必要的加锁更多详情见以下链接的上一篇博文介绍</p>
+<p><a target="_blank" rel="noopener" href="http://blog.csdn.net/sinat_33087001/article/details/77644441#t27">http://blog.csdn.net/sinat_33087001/article/details/77644441#t27</a></p>
+<h2 id="偏向锁-轻量级锁-重量级锁"><a href="#偏向锁-轻量级锁-重量级锁" class="headerlink" title="偏向锁&#x2F;轻量级锁&#x2F;重量级锁"></a>偏向锁&#x2F;轻量级锁&#x2F;重量级锁</h2><p>这三种锁是指锁的状态，并且是针对Synchronized。在Java 5通过引入锁升级的机制来实现高效Synchronized。这三种锁的状态是通过对象监视器在对象头中的字段来表明的。</p>
+<p>偏向锁是指一段同步代码一直被一个线程所访问，那么该线程会自动获取锁。降低获取锁的代价。</p>
+<p>轻量级锁是指当锁是偏向锁的时候，被另一个线程所访问，偏向锁就会升级为轻量级锁，其他线程会通过自旋的形式尝试获取锁，不会阻塞，提高性能。</p>
+<p>**重量级锁是指当锁为轻量级锁的时候，另一个线程虽然是自旋，但自旋不会一直持续下去，当自旋一定次数的时候，还没有获取到锁，就会进入阻塞，该锁膨胀为重量级锁。**重量级锁会让其他申请的线程进入阻塞，性能降低。</p>
+<p><a target="_blank" rel="noopener" href="http://blog.csdn.net/sinat_33087001/article/details/77644441#t27">http://blog.csdn.net/sinat_33087001/article/details/77644441#t27</a></p>
+<h2 id="分段锁"><a href="#分段锁" class="headerlink" title="分段锁"></a>分段锁</h2><p>分段锁其实是一种锁的设计，并不是具体的一种锁，对于ConcurrentHashMap而言，其并发的实现就是通过分段锁的形式来实现高效的并发操作。我们以ConcurrentHashMap来说一下分段锁的含义以及设计思想，ConcurrentHashMap中的分段锁称为Segment，它即类似于HashMap（JDK7与JDK8中HashMap的实现）的结构，即内部拥有一个Entry数组，数组中的每个元素又是一个链表；同时又是一个ReentrantLock（Segment继承了ReentrantLock)。</p>
+<p>当需要put元素的时候，并不是对整个hashmap进行加锁，而是先通过hashcode来知道他要放在那一个分段中，然后对这个分段进行加锁，所以当多线程put的时候，只要不是放在一个分段中，就实现了真正的并行的插入。</p>
+<p>但是，在统计size的时候，可就是获取hashmap全局信息的时候，就需要获取所有的分段锁才能统计。分段锁的设计目的是细化锁的粒度，当操作不需要更新整个数组的时候，就仅仅针对数组中的一项进行加锁操作。</p>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a href="https://irving18.github.io">王征</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://irving18.github.io/2024/12/27/%E7%BA%BF%E7%A8%8B-2-%E7%BA%BF%E7%A8%8B%E9%94%81%E5%88%86%E7%B1%BB/">https://irving18.github.io/2024/12/27/%E7%BA%BF%E7%A8%8B-2-%E7%BA%BF%E7%A8%8B%E9%94%81%E5%88%86%E7%B1%BB/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://irving18.github.io" target="_blank">一个通人性的博主</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/JAVA%E5%9F%BA%E7%A1%80/">JAVA基础</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,twitter,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc/sharejs/dist/js/social-share.min.js" defer></script></div></div><div class="post-reward"><div class="reward-button"><i class="fas fa-qrcode"></i>赞助</div><div class="reward-main"><ul class="reward-all"><li class="reward-item"><a href="/img/wechat_pay.png" target="_blank"><img class="post-qr-code-img" src="/img/wechat_pay.png" alt="wechat"/></a><div class="post-qr-code-desc">wechat</div></li></ul></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related full-width" href="/2024/12/27/%E7%BA%BF%E7%A8%8B%E6%B1%A0%EF%BC%883%EF%BC%89%E7%BB%88%E6%AD%A2%E7%BA%BF%E7%A8%8B%E6%B1%A0%E5%8E%9F%E7%90%86/" title="线程池（3）终止线程池原理"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">线程池（3）终止线程池原理</div></div><div class="info-2"><div class="info-item-1">[toc] 终止线程池一、终止线程池方法1、 shutdown() 安全的终止线程池- checkShutdownAccess()  核查当前线程是否有权限intercept() - advanceRunState(SHUTDOWN) 设置CAS方式设置线程池shutdown状态 - interruptIdleWorkers()中断空闲线程 - onShutdown()钩子函数 - tryTerminate()尝试中断线程池  2、 shutdownNow() 强制终止线程池- checkShutdownAccess()  核查当前线程是否有权限intercept() - advanceRunState(STOP) 设置CAS方式设置线程池Stop状态 - interruptWorkers() 中断所有线程(不会尝试获取锁w.tryLock，直接intercept) - tasks = drainQueue(); //将workQueue中的元素放入一个List并返回 - tryTerminate();尝试中断线程池  3、 awaitTermination(timeout)...</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2024/12/24/%E7%B1%BB%E5%8A%A0%E8%BD%BD%E6%9C%BA%E5%88%B6/" title="类加载机制（1）类加载过程"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-12-24</div><div class="info-item-2">类加载机制（1）类加载过程</div></div><div class="info-2"><div class="info-item-1">目录 一、什么是类的加载（类初始化） 1、分清类初始化和对象初始化 2、类的初始化过程是在程序运行期间完成   二、类的生命周期：加验准析初使卸 1、加载 2、验证 3、准备【重点】 4、解析 5、初始化【重点】 （1）什么是初始化 （2）初始化的内容 （3）类初始化的六大节点：【主动引用】 （4）不会触发初始化的【被动引用】   6、使用 7、卸载 8、结束生命周期   三、接口的加载过程-比较特殊 四、总结 1、加载、连接、初始化 2、主动引用和被动引用 3、类初始化在jvm生命周期内只进行一次。   五、来看几道考试题 六、根据上边的最后一道题，总结整体执行顺序 七、对象初始化，继承问题，为什么构造方法中，不建议使用可重写的方法？Calling non-final function initView in constructor  一、什么是类的加载（类初始化）jvm通过加载、连接（验证、准备、解析）、初始化3大步将类加载进内存的过程叫做类的加载或类初始化。 关键点：1、分清类初始化和对象初始化的不同。-...</div></div></div></a><a class="pagination-related" href="/2024/12/24/%E7%B1%BB%E5%8A%A0%E8%BD%BD%E6%9C%BA%E5%88%B62/" title="类加载机制（2）类加载器源码解析"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-12-24</div><div class="info-item-2">类加载机制（2）类加载器源码解析</div></div><div class="info-2"><div class="info-item-1">目录 一、类加载器 1、BootstrapClassLoader 启动类加载器 2、ExtensionClassLoader 扩展类加载器 3、ApplicationClassLoader 应用类加载器 4、CustomClassLoader 自定义类加载器 5、线程上下文类加载器   二、java虚拟机入口应用：sun.misc.Launcher 1、sun.misc.Launcher 主入口 2、内部类 ExtClassLoader extends URLClassLoader源码 3、内部类 AppClassLoader  extends URLClassLoader源码 4、真实父类URLClassLoader extends ClassLoader源码   三、双亲委派模型 1、工作流程 2、意义说明   四、ClassLoader源码分析 1、loadClass 实现双亲委派逻辑 2、findClass 通过path找到.class加载进byte[]二进制数组 3、defineClass(byte[] b)...</div></div></div></a><a class="pagination-related" href="/2024/12/24/%E7%B1%BB%E5%8A%A0%E8%BD%BD%E6%9C%BA%E5%88%B6%EF%BC%883%EF%BC%89DexClassLoader%E5%BA%94%E7%94%A8%E7%AF%87/" title="类加载机制（3）DexClassLoader应用篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-12-24</div><div class="info-item-2">类加载机制（3）DexClassLoader应用篇</div></div><div class="info-2"><div class="info-item-1">目录 一、Android中ClassLoader的说明 二、DexClassLoader使用 三、类加载机制的缓存 四、如何避过缓存 五、class二进制文件加载进内存哪个jvm分区？   一、Android中ClassLoader的说明   类加载器 说明    DexClassLoader 可以加载jar&#x2F;apk&#x2F;dex，可以从SD卡中加载未安装的apk；   PathClassLoader 只能加载系统中已经安装过的apk；   二、DexClassLoader使用参数说明    入参 说明    dexPath 表示dex文件的路径，这个路径可以是apk、jar、zip等文件的路径如果是多个文件的路径，可以通过File.pathSeparator来进行分割（在 Windows 上，此字段为 “;”，在 UNIX 上，此字段为 “:”）   optimizedDirectory 用于存储优化后的dex文件，这个目录不能是外部存储，因为Android系统不允许外部存储上的应用进行DEX优化。   librarySearchPath 用于查找...</div></div></div></a><a class="pagination-related" href="/2024/12/27/%E7%BA%BF%E7%A8%8B-1-%E5%9F%BA%E7%A1%80-TODO/" title="线程-1-基础-TODO"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-12-27</div><div class="info-item-2">线程-1-基础-TODO</div></div><div class="info-2"><div class="info-item-1">todo-list:1、阿里三问https://www.jianshu.com/p/fa9a92f517db 目录 一、线程 1、创建线程的方式：理论上只有两种 2、线程状态简版：新建、就绪、阻塞、结束 3、线程状态完整：1、NEW（初始）；2、RUNNING（运行中）&#x2F;READY（就绪）；3、WAITING（等待）；4、TIMED_WAITING(等待超时)；5、BLOCKED（阻塞）；6、TERMINATED（终止）   二、线程的API 1、静态方法 1.1、Thread.yield() 1.2、Thread.sleep()  &lt;1&gt; 抛出InterruptedException时机 &lt;2&gt; interrupted标志清除时机 &lt;3&gt; 和wait()的区别   1.3、Thread.interrupted()   2、普通方法 2.1、new Thread().start() 2.2、new Thread().run() 2.3、new Thread().join() 2.4、new...</div></div></div></a><a class="pagination-related" href="/2024/12/27/%E7%BA%BF%E7%A8%8B-2-AQS-ReentranLock%E7%BA%BF%E7%A8%8B%E9%94%81/" title="线程-2-AQS-ReentranLock线程锁"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-12-27</div><div class="info-item-2">线程-2-AQS-ReentranLock线程锁</div></div><div class="info-2"><div class="info-item-1">目录 一、ReentrantLock 组成部分 Sync extends AbstractQueuedSynchronizer NonfairSync extends Sync  FairSync extends Sync   二、ReentrantLock 性质 1、独占锁 2、可重入锁&#x2F;不可重入锁 3、公平锁&#x2F;不公平锁   三、ReentrantLock Api说明 1、lock() 2、lockInterruptibly() 3、tryLock() 4、tryLock(long,TimeUnit) 5、unLock() 6、newCondition()   四、Condition实现通知机制 五、与Synchronized关键字对比  一、ReentrantLock组成部分 Sync extends AbstractQueuedSynchronizer NonfairSync extends SyncFairSync extends Sync二、ReentrantLock 性质1、独占锁 &#x2F;...</div></div></div></a><a class="pagination-related" href="/2024/12/27/%E7%BA%BF%E7%A8%8B-3-%E7%BA%BF%E7%A8%8B%E5%AE%89%E5%85%A8(safe)%E4%BD%BF%E7%94%A8%E6%80%BB%E7%BB%93/" title="线程-3-线程安全(safe)使用总结"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-12-27</div><div class="info-item-2">线程-3-线程安全(safe)使用总结</div></div><div class="info-2"><div class="info-item-1">目录 一、保障线程安全的方法、用例     1、Volatile 保障可见性，抑制重排序；以及实现原理  2、原子操作类 Atomic（ABA问题）  3、Synchronized 同步代码块  4、Lock 线程锁   二、保障线程安全的数据结构 三、异步转同步的方法 1、Future&#x3D;executor.submit(callable)  2、countDownLatch  3、handler.runWithScissors   四、多线程异步加载场景解决 1、executor 线程池 2、rxjava2    五、生产者消费者模式 1、syncnazition形式 2、Lock形式 3、BlockingQueue阻塞队列形式   六、三个线程依次打印100个数 condition 实现    一、保障线程安全的方法、用例 1、Volatile 保障可见性 当对非volatile变量进行读写的时候，每个线程先从内存拷贝变量到CPU缓存中。如果计算机有多个CPU，每个线程可能在不同的CPU上被处理，这意味着每个线程可以考虑到不同的CPU...</div></div></div></a></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">王征</div><div class="author-info-description"></div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">11</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">1</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">1</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/IRVING18"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="mailto:ivring18@163.com" target="_blank" title="Email"><i class="fas fa-envelope" style="color: #4a7dbe;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content"><span>一个通人性的博主，码字不易，用爱发电。希望大家多多支持。</span><img width="250px" src="/img/wechat_pay.png"></div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#%E4%B8%80%E3%80%81%E6%8C%89%E7%85%A7%E5%85%B6%E6%80%A7%E8%B4%A8%E5%88%86%E7%B1%BB"><span class="toc-number">1.</span> <span class="toc-text">一、按照其性质分类</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AC%E5%B9%B3%E9%94%81-%E9%9D%9E%E5%85%AC%E5%B9%B3%E9%94%81"><span class="toc-number">1.1.</span> <span class="toc-text">公平锁&#x2F;非公平锁</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B9%90%E8%A7%82%E9%94%81-%E6%82%B2%E8%A7%82%E9%94%81"><span class="toc-number">1.2.</span> <span class="toc-text">乐观锁&#x2F;悲观锁</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%8B%AC%E4%BA%AB%E9%94%81-%E5%85%B1%E4%BA%AB%E9%94%81"><span class="toc-number">1.3.</span> <span class="toc-text">独享锁&#x2F;共享锁</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%92%E6%96%A5%E9%94%81-%E8%AF%BB%E5%86%99%E9%94%81"><span class="toc-number">1.4.</span> <span class="toc-text">互斥锁&#x2F;读写锁</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%8F%AF%E9%87%8D%E5%85%A5%E9%94%81-%E4%B8%8D%E5%8F%AF%E9%87%8D%E5%85%A5%E9%94%81"><span class="toc-number">1.5.</span> <span class="toc-text">可重入锁&#x2F;不可重入锁</span></a></li></ol></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E4%BA%8C%E3%80%81%E6%8C%89%E7%85%A7%E8%AE%BE%E8%AE%A1%E6%96%B9%E6%A1%88%E6%9D%A5%E5%88%86%E7%B1%BB"><span class="toc-number">2.</span> <span class="toc-text">二、按照设计方案来分类</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E8%87%AA%E6%97%8B%E9%94%81-%E8%87%AA%E9%80%82%E5%BA%94%E8%87%AA%E6%97%8B%E9%94%81"><span class="toc-number">2.1.</span> <span class="toc-text">自旋锁&#x2F;自适应自旋锁</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E9%94%81%E7%B2%97%E5%8C%96-%E9%94%81%E6%B6%88%E9%99%A4"><span class="toc-number">2.2.</span> <span class="toc-text">锁粗化&#x2F;锁消除</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%81%8F%E5%90%91%E9%94%81-%E8%BD%BB%E9%87%8F%E7%BA%A7%E9%94%81-%E9%87%8D%E9%87%8F%E7%BA%A7%E9%94%81"><span class="toc-number">2.3.</span> <span class="toc-text">偏向锁&#x2F;轻量级锁&#x2F;重量级锁</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%88%86%E6%AE%B5%E9%94%81"><span class="toc-number">2.4.</span> <span class="toc-text">分段锁</span></a></li></ol></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/12/27/%E7%BA%BF%E7%A8%8B-2-%E7%BA%BF%E7%A8%8B%E9%94%81%E5%88%86%E7%B1%BB/" title="线程-2-线程锁分类">线程-2-线程锁分类</a><time datetime="2024-12-27T03:52:19.000Z" title="发表于 2024-12-27 11:52:19">2024-12-27</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/12/27/%E7%BA%BF%E7%A8%8B%E6%B1%A0%EF%BC%883%EF%BC%89%E7%BB%88%E6%AD%A2%E7%BA%BF%E7%A8%8B%E6%B1%A0%E5%8E%9F%E7%90%86/" title="线程池（3）终止线程池原理">线程池（3）终止线程池原理</a><time datetime="2024-12-27T03:52:19.000Z" title="发表于 2024-12-27 11:52:19">2024-12-27</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/12/27/%E7%BA%BF%E7%A8%8B%E6%B1%A0%EF%BC%882%EF%BC%89execute()%E6%89%A7%E8%A1%8C%E8%BF%87%E7%A8%8B%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="线程池（2）execute()执行过程源码分析">线程池（2）execute()执行过程源码分析</a><time datetime="2024-12-27T03:45:07.000Z" title="发表于 2024-12-27 11:45:07">2024-12-27</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/12/27/%E7%BA%BF%E7%A8%8B-3-%E7%BA%BF%E7%A8%8B%E5%AE%89%E5%85%A8(safe)%E4%BD%BF%E7%94%A8%E6%80%BB%E7%BB%93/" title="线程-3-线程安全(safe)使用总结">线程-3-线程安全(safe)使用总结</a><time datetime="2024-12-27T03:45:00.000Z" title="发表于 2024-12-27 11:45:00">2024-12-27</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/12/27/%E7%BA%BF%E7%A8%8B-4-ThreadLocal/" title="线程-4-ThreadLocal">线程-4-ThreadLocal</a><time datetime="2024-12-27T03:44:58.000Z" title="发表于 2024-12-27 11:44:58">2024-12-27</time></div></div></div></div></div></div></main><footer id="footer" style="background-image: url(/img/bg.png);"><div id="footer-wrap"><div class="copyright">&copy;2024 By 王征</div><div class="footer_custom_text"><a href=""><img class="icp-icon" src="/img/avatar.jpg"><span>一个通人性的博主</span></a></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js"></script><script src="/js/main.js"></script><div class="js-pjax"></div><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></div></body></html>
