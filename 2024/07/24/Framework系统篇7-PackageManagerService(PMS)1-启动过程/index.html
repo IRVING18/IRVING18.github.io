@@ -1,0 +1,617 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="light"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>Framework系统篇7-PackageManagerService(PMS)1-启动过程 | Android高级直通车</title><meta name="author" content="王征"><meta name="copyright" content="王征"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="ffffff"><meta name="description" content="目录 完整的PMS启动、Activity获取的流程图 一、前述 1.1 先了解下PMS的作用 1.2 从SystemServer进程调度PMS启动 1.2.1 运行SystemServer.run()方法 1.2.2 在startBootstrapServices()中启动PMS.main() 1.2.3 在startOtherServices()中继续调用PMS核心方法：performBootD">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Framework系统篇7-PackageManagerService(PMS)1-启动过程">
+<meta property="og:url" content="https://irving18.github.io/2024/07/24/Framework%E7%B3%BB%E7%BB%9F%E7%AF%877-PackageManagerService(PMS)1-%E5%90%AF%E5%8A%A8%E8%BF%87%E7%A8%8B/index.html">
+<meta property="og:site_name" content="Android高级直通车">
+<meta property="og:description" content="目录 完整的PMS启动、Activity获取的流程图 一、前述 1.1 先了解下PMS的作用 1.2 从SystemServer进程调度PMS启动 1.2.1 运行SystemServer.run()方法 1.2.2 在startBootstrapServices()中启动PMS.main() 1.2.3 在startOtherServices()中继续调用PMS核心方法：performBootD">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://irving18.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2024-07-24T07:38:20.000Z">
+<meta property="article:modified_time" content="2024-12-27T09:05:40.376Z">
+<meta property="article:author" content="王征">
+<meta property="article:tag" content="Android进阶">
+<meta property="article:tag" content="Framework">
+<meta property="article:tag" content="系统服务">
+<meta property="article:tag" content="PMS">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://irving18.github.io/img/avatar.jpg"><link rel="shortcut icon" href="/img/avatar.jpg"><link rel="canonical" href="https://irving18.github.io/2024/07/24/Framework%E7%B3%BB%E7%BB%9F%E7%AF%877-PackageManagerService(PMS)1-%E5%90%AF%E5%8A%A8%E8%BF%87%E7%A8%8B/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', 'ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: undefined,
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":true},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyload: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: 'Framework系统篇7-PackageManagerService(PMS)1-启动过程',
+  isPost: true,
+  isHome: false,
+  isHighlightShrink: false,
+  isToc: true,
+  isShuoshuo: false
+}</script><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="onerror=null;src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">41</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">18</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">3</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 文章</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg" id="page-header" style="background-image: url(/img/bg.png);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">Android高级直通车</span></a><a class="nav-page-title" href="/"><span class="site-name">Framework系统篇7-PackageManagerService(PMS)1-启动过程</span></a></span><div id="menus"><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 文章</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">Framework系统篇7-PackageManagerService(PMS)1-启动过程</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2024-07-24T07:38:20.000Z" title="发表于 2024-07-24 15:38:20">2024-07-24</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2024-12-27T09:05:40.376Z" title="更新于 2024-12-27 17:05:40">2024-12-27</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/Android%E8%BF%9B%E9%98%B6/">Android进阶</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">5.2k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>21分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h1 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h1><ul>
+<li><a href="#jump0">完整的PMS启动、Activity获取的流程图</a></li>
+<li><a href="#jump1">一、前述</a><ul>
+<li><a href="#jump1_1">1.1 先了解下PMS的作用</a></li>
+<li><a href="#jump1_1">1.2 从SystemServer进程调度PMS启动</a><ul>
+<li><a href="#jump1_2_1">1.2.1 运行SystemServer.run()方法</a></li>
+<li><a href="#jump1_2_2">1.2.2 在startBootstrapServices()中启动PMS.main()</a></li>
+<li><a href="#jump1_2_3">1.2.3 在startOtherServices()中继续调用PMS核心方法：performBootDexOpt()、systemReady()</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#jump2">二、PMS.main()启动</a><ul>
+<li><a href="#jump2_1">2.1 开始阶段（PMS_START）创建Settings保存app安装信息等，开启文件目录</a><ul>
+<li><a href="#jump2_1_1">2.1.1 Settings：用于保存所有app的安装信息等</a></li>
+<li><a href="#jump2_1_2">2.1.2 SystemConfig：存储应用的权限等信息，如系统应用等</a></li>
+<li><a href="#jump2_1_3">2.1.3 在Data分区创建一些目录：如&#x2F;data&#x2F;data 等</a></li>
+</ul>
+</li>
+<li><a href="#jump2_2">2.2 扫描系统阶段（PMS_SYSTEM_SCAN_START）读取系统app、Framework文件</a></li>
+<li><a href="#jump2_3">2.3 扫描Data分区阶段（PMS_DATA_SCAN_START）读取用户App文件</a></li>
+<li><a href="#jump2_4">2.4 扫描结束阶段：PMS_SCAN_END</a></li>
+<li><a href="#jump2_5">2.5 准备阶段（PMS_READY）启动PackageInstallerService服务，用于apk安装的服务</a><ul>
+<li><a href="#jump2_5_1">2.5.1 创建PKIS服务，用于后续apk安装</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#jump3">三、具体scanDirLI()扫描方法的作用</a><ul>
+<li><a href="#jump3_1">3.1 扫描的数据存在mActivities、mServices、mSettings中</a></li>
+<li><a href="#jump3_2">3.2 scanDirLI()扫描方法</a></li>
+<li><a href="#jump3_3">3.3 scanPackageDirtyLI()具体处理四大组件的解析</a></li>
+</ul>
+</li>
+<li><a href="#jump4">四、PMS.performBootDexOpt()优化（系统app、普通app）的dex文件</a><ul>
+<li><a href="#jump4_1">4.1 PKMS.filterRecentlyUsedApps()过滤出需要dexopt优化的app（最近一周使用过的app）</a></li>
+<li><a href="#jump4_2">4.2 PKMS.performBootDexOpt()执行dexopt优化</a></li>
+<li><a href="#jump4_3">4.3 由mInstaller服务承接执行dexopt优化</a></li>
+</ul>
+</li>
+<li><a href="#jump4">五、总结</a></li>
+<li><a href="#jump">参考链接</a></li>
+</ul>
+<h1 id="完整流程图"><a href="#完整流程图" class="headerlink" title="完整流程图"></a><span id="jump0"/>完整流程图</h1><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%877-PackageManagerService(PMS)1-%E5%90%AF%E5%8A%A8%E8%BF%87%E7%A8%8B_1.jpg" alt="PMS启动和获取Activity流程.png"></p>
+<h1 id="一、前述"><a href="#一、前述" class="headerlink" title="一、前述"></a><span id="jump1"/>一、前述</h1><h2 id="1-1-先了解下PMS的作用"><a href="#1-1-先了解下PMS的作用" class="headerlink" title="1.1 先了解下PMS的作用"></a><span id="jump1_1"/>1.1 先了解下PMS的作用</h2><p>PackageManagerService(简称PKMS)，是Android系统中核心服务之一，管理着所有跟package相关的工作。<br>常见的比如：</p>
+<ul>
+<li>安装APK</li>
+<li>卸载APK</li>
+<li>获取Activity等四大组件的静态类名等</li>
+</ul>
+<p>PKMS服务也是通过binder进行通信，IPackageManager.aidl由工具转换后自动生成binder的：</p>
+<ul>
+<li>服务端IPackageManager.Stub和</li>
+<li>客户端IPackageManager.Stub.Proxy，</li>
+</ul>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%877-PackageManagerService(PMS)1-%E5%90%AF%E5%8A%A8%E8%BF%87%E7%A8%8B_2.jpg" alt="image.png"></p>
+<ul>
+<li>Binder服务端：<ul>
+<li>进程：运行在system_server进程中，提供服务    </li>
+<li>实现：PackageManagerService继承于IPackageManager.Stub；</li>
+</ul>
+</li>
+<li>Binder客户端：<ul>
+<li>进程：运行在app端，通过PackageManager类暴露实现方法，与服务端通信</li>
+<li>实现：<ul>
+<li>PackageManager的实现类是：ApplicationPackageManager(简称APM)</li>
+<li>APM中持有成员变量mPM，继承于IPackageManager.Stub.Proxy; 即Binder的客户端proxy</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<h2 id="1-2-从SystemServer进程调度PMS启动"><a href="#1-2-从SystemServer进程调度PMS启动" class="headerlink" title="1.2 从SystemServer进程调度PMS启动"></a><span id="jump1_2"/>1.2 从SystemServer进程调度PMS启动</h2><p>在[Fw3-系统启动流程]一文中，我们已经知晓systemServer进程由Zygoet fork出来。</p>
+<p>核心流程如下：</p>
+<ul>
+<li>SystemServer.run()方法调度PMS执行<ul>
+<li>startBootstrapServices()中启动PMS.main()</li>
+<li>startOtherServices()中继续调用PMS核心方法<ul>
+<li>mPMS.performBootDexOpt()</li>
+<li>mPMS.systemReady()</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<h3 id="1-2-1-运行SystemServer-run-方法"><a href="#1-2-1-运行SystemServer-run-方法" class="headerlink" title="1.2.1 运行SystemServer.run()方法"></a><span id="jump1_2_1"/>1.2.1 运行SystemServer.run()方法</h3><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">run</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="comment">//这个是管理各个服务的，如pms、wms的启动、停止等</span></span><br><span class="line">    <span class="comment">//注意：和Service Manager 不是一个东西</span></span><br><span class="line">    mSystemServiceManager = <span class="keyword">new</span> <span class="title class_">SystemServiceManager</span>(mSystemContext);</span><br><span class="line">    <span class="keyword">try</span> &#123;</span><br><span class="line">        <span class="comment">//1、启动引导服务：AMS、PMS、PowerManagerServic</span></span><br><span class="line">        startBootstrapServices();</span><br><span class="line">        <span class="comment">//2、启动核心服务：BatteryService、UsageStatsService和WebViewUpdateService</span></span><br><span class="line">        startCoreServices();</span><br><span class="line">        <span class="comment">//3、启动其他服务：如WMS、CameraService、AlarmManagerService、VrManagerService</span></span><br><span class="line">        startOtherServices();</span><br><span class="line">    &#125; <span class="keyword">catch</span> (Throwable ex) &#123;</span><br><span class="line">        <span class="keyword">throw</span> ex;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="comment">// Loop forever.</span></span><br><span class="line">    Looper.loop();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="1-2-2-在startBootstrapServices-中启动PMS-main"><a href="#1-2-2-在startBootstrapServices-中启动PMS-main" class="headerlink" title="1.2.2 在startBootstrapServices()中启动PMS.main()"></a><span id="jump1_2_2"/>1.2.2 在startBootstrapServices()中启动PMS.main()</h3><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">startBootstrapServices</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="comment">//启动installer服务</span></span><br><span class="line">    <span class="type">Installer</span> <span class="variable">installer</span> <span class="operator">=</span> mSystemServiceManager.startService(Installer.class);</span><br><span class="line">    ...</span><br><span class="line">    <span class="comment">//创建PKMS对象【见小节 二、PMS.main()启动 】</span></span><br><span class="line">    mPackageManagerService = PackageManagerService.main(mSystemContext, installer,</span><br><span class="line">                mFactoryTestMode != FactoryTest.FACTORY_TEST_OFF, mOnlyCore);</span><br><span class="line">    <span class="comment">//PKMS是否首次启动</span></span><br><span class="line">    mFirstBoot = mPackageManagerService.isFirstBoot();</span><br><span class="line"></span><br><span class="line">    <span class="comment">//【见小节3.1】</span></span><br><span class="line">    mPackageManager = mSystemContext.getPackageManager();</span><br><span class="line">    ...</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h3 id="1-2-3-在startOtherServices-中继续调用PMS核心方法：performBootDexOpt-、systemReady"><a href="#1-2-3-在startOtherServices-中继续调用PMS核心方法：performBootDexOpt-、systemReady" class="headerlink" title="1.2.3 在startOtherServices()中继续调用PMS核心方法：performBootDexOpt()、systemReady()"></a><span id="jump1_2_3"/>1.2.3 在startOtherServices()中继续调用PMS核心方法：performBootDexOpt()、systemReady()</h3><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">startOtherServices</span><span class="params">()</span> &#123;</span><br><span class="line">    ...</span><br><span class="line">    <span class="comment">//【见小节三】</span></span><br><span class="line">    mPackageManagerService.performBootDexOpt();</span><br><span class="line"></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h1 id="二、PMS-main-启动"><a href="#二、PMS-main-启动" class="headerlink" title="二、PMS.main()启动"></a><span id="jump2"/>二、PMS.main()启动</h1><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">#frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java</span><br><span class="line"></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">static</span> PackageManagerService <span class="title function_">main</span><span class="params">(Context context, Installer installer, <span class="type">boolean</span> factoryTest, <span class="type">boolean</span> onlyCore)</span> &#123;</span><br><span class="line">    <span class="comment">//1、初始化PKMS对象</span></span><br><span class="line">    <span class="type">PackageManagerService</span> <span class="variable">m</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">PackageManagerService</span>(context, installer, factoryTest, onlyCore);</span><br><span class="line">    <span class="comment">//2、将PMS注册到ServiceManager，这是binder服务的常规注册流程</span></span><br><span class="line">    ServiceManager.addService(<span class="string">&quot;package&quot;</span>, m);</span><br><span class="line">    <span class="keyword">return</span> m;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>PMS初始化时，有五个阶段，下边分别将这五个阶段</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="title function_">PackageManagerService</span><span class="params">(Context context, Installer installer, <span class="type">boolean</span> factoryTest, <span class="type">boolean</span> onlyCore)</span> &#123;</span><br><span class="line">    阶段<span class="number">1</span>：BOOT_PROGRESS_PMS_START</span><br><span class="line">    ...</span><br><span class="line">    <span class="keyword">synchronized</span> (mInstallLock) &#123;</span><br><span class="line">        <span class="keyword">synchronized</span> (mPackages) &#123;</span><br><span class="line">            ...</span><br><span class="line">            阶段<span class="number">2</span>：BOOT_PROGRESS_PMS_SYSTEM_SCAN_START</span><br><span class="line">            阶段<span class="number">3</span>：BOOT_PROGRESS_PMS_DATA_SCAN_START</span><br><span class="line">            阶段<span class="number">4</span>：BOOT_PROGRESS_PMS_SCAN_END</span><br><span class="line">            阶段<span class="number">5</span>：BOOT_PROGRESS_PMS_READY</span><br><span class="line">            ...</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="2-1-开始阶段（PMS-START）创建Settings保存app安装信息等"><a href="#2-1-开始阶段（PMS-START）创建Settings保存app安装信息等" class="headerlink" title="2.1 开始阶段（PMS_START）创建Settings保存app安装信息等"></a><span id="jump2_1"/>2.1 开始阶段（PMS_START）创建Settings保存app安装信息等</h2><p>这个阶段源码很多，我们只记几个关键点：</p>
+<ul>
+<li>1、Settings：用于保存所有app的安装信息等</li>
+<li>2、创建Dex优化工具类：用于给dex包优化的工具</li>
+<li>3、SystemConfig：存储应用的权限等信息，如系统应用等</li>
+<li>4、在Data分区创建一些目录：如&#x2F;data&#x2F;data 等</li>
+</ul>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br></pre></td><td class="code"><pre><span class="line">ublic <span class="title function_">PackageManagerService</span><span class="params">(Context context, Installer installer,</span></span><br><span class="line"><span class="params">            <span class="type">boolean</span> factoryTest, <span class="type">boolean</span> onlyCore)</span> &#123;</span><br><span class="line">    ...</span><br><span class="line">    <span class="comment">//1、Settings用于保存所有包的动态设置：包括所有app的安装信息</span></span><br><span class="line">    mSettings = <span class="keyword">new</span> <span class="title class_">Settings</span>(mPackages);</span><br><span class="line">    <span class="comment">//在Settings中添加多个默认的sharedUserId</span></span><br><span class="line">    mSettings.addSharedUserLPw(<span class="string">&quot;android.uid.system&quot;</span>, Process.SYSTEM_UID,</span><br><span class="line">            ApplicationInfo.FLAG_SYSTEM, ApplicationInfo.PRIVATE_FLAG_PRIVILEGED);<span class="comment">//1</span></span><br><span class="line">    ...</span><br><span class="line">    <span class="comment">//2、创建Dex优化工具类</span></span><br><span class="line">    mPackageDexOptimizer = <span class="keyword">new</span> <span class="title class_">PackageDexOptimizer</span>(installer, mInstallLock, context,</span><br><span class="line">            <span class="string">&quot;*dexopt*&quot;</span>);</span><br><span class="line">            </span><br><span class="line">    <span class="comment">//3、得到全局系统配置信息：负责解析和存储 Android 系统中与系统配置相关的各种信息</span></span><br><span class="line">    <span class="type">SystemConfig</span> <span class="variable">systemConfig</span> <span class="operator">=</span> SystemConfig.getInstance();</span><br><span class="line">    <span class="comment">//获取系统权限</span></span><br><span class="line">    mSystemPermissions = systemConfig.getSystemPermissions();</span><br><span class="line">    ...</span><br><span class="line">    <span class="comment">//安装APK时需要的锁，保护所有对installd的访问。</span></span><br><span class="line">    <span class="keyword">synchronized</span> (mInstallLock) &#123;</span><br><span class="line">        <span class="comment">//更新APK时需要的锁，保护内存中已经解析的包信息等内容</span></span><br><span class="line">        <span class="keyword">synchronized</span> (mPackages) &#123;</span><br><span class="line">            <span class="comment">//4、在Data分区创建一些目录：如/data/data 等</span></span><br><span class="line">            <span class="type">File</span> <span class="variable">dataDir</span> <span class="operator">=</span> Environment.getDataDirectory();</span><br><span class="line">            mAppDataDir = <span class="keyword">new</span> <span class="title class_">File</span>(dataDir, <span class="string">&quot;data&quot;</span>);</span><br><span class="line">            mAppInstallDir = <span class="keyword">new</span> <span class="title class_">File</span>(dataDir, <span class="string">&quot;app&quot;</span>);</span><br><span class="line">            mAppLib32InstallDir = <span class="keyword">new</span> <span class="title class_">File</span>(dataDir, <span class="string">&quot;app-lib&quot;</span>);</span><br><span class="line">            mAsecInternalPath = <span class="keyword">new</span> <span class="title class_">File</span>(dataDir, <span class="string">&quot;app-asec&quot;</span>).getPath();</span><br><span class="line">            mUserAppDataDir = <span class="keyword">new</span> <span class="title class_">File</span>(dataDir, <span class="string">&quot;user&quot;</span>);</span><br><span class="line">            mDrmAppPrivateInstallDir = <span class="keyword">new</span> <span class="title class_">File</span>(dataDir, <span class="string">&quot;app-private&quot;</span>);</span><br><span class="line">        &#125;</span><br><span class="line">   &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="2-1-1-Settings：用于保存所有app的安装信息等"><a href="#2-1-1-Settings：用于保存所有app的安装信息等" class="headerlink" title="2.1.1 Settings：用于保存所有app的安装信息等"></a><span id="jump2_1_1"/>2.1.1 Settings：用于保存所有app的安装信息等</h3><p>Settings中存储的信息，<br>比如启动Activity时，获取Activity的绝对路径就在这里获取；</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>信息</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>packages.xml</td>
+<td>记录所有安装app的信息</td>
+</tr>
+<tr>
+<td>packages-backup.xml</td>
+<td>备份文件</td>
+</tr>
+<tr>
+<td>packages-stopped.xml</td>
+<td>记录系统被强制停止的文件</td>
+</tr>
+<tr>
+<td>packages-stopped-backup.xml</td>
+<td>备份文件</td>
+</tr>
+<tr>
+<td>packages.list</td>
+<td>记录应用的数据信息</td>
+</tr>
+</tbody></table>
+<h3 id="2-1-2-SystemConfig：存储应用的权限等信息，如系统应用等"><a href="#2-1-2-SystemConfig：存储应用的权限等信息，如系统应用等" class="headerlink" title="2.1.2 SystemConfig：存储应用的权限等信息，如系统应用等"></a><span id="jump2_1_2"/>2.1.2 SystemConfig：存储应用的权限等信息，如系统应用等</h3><table border="1" cellpadding="10" cellspacing="0">
+    <tr>
+        <th>目录</th>
+        <th>作用</th>
+    </tr>
+    <tr>
+        <td>/system/etc/sysconfig</td>
+        <td>
+            存放系统配置文件，定义系统服务和核心应用的行为及配置关键系统设置。
+            包括系统关键应用、默认应用设置、数据保留策略、节电白名单等。
+        </td>
+    </tr>
+    <tr>
+        <td>/system/etc/permissions</td>
+        <td>
+            存放权限定义文件，定义 Android 系统中权限的分配。
+            包括平台权限、权限分组、特定权限的分配等。
+        </td>
+    </tr>
+    <tr>
+        <td>/oem/etc/sysconfig</td>
+        <td>
+            供设备制造商（OEM）使用的系统配置目录，用于自定义系统配置。
+            可用于覆盖或扩展系统默认配置，如预装应用和系统服务行为。
+        </td>
+    </tr>
+    <tr>
+        <td>/oem/etc/permissions</td>
+        <td>
+            供 OEM 使用的权限配置目录，用于定义或扩展设备的权限配置。
+            可为设备特定应用授予额外权限，或定制权限策略。
+        </td>
+    </tr>
+</table>
+
+<h3 id="2-1-3-在Data分区创建一些目录：如-data-data-等"><a href="#2-1-3-在Data分区创建一些目录：如-data-data-等" class="headerlink" title="2.1.3 在Data分区创建一些目录：如&#x2F;data&#x2F;data 等"></a><span id="jump2_1_3"/>2.1.3 在Data分区创建一些目录：如&#x2F;data&#x2F;data 等</h3><p>创建的这些目录分类</p>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>所对应目录</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>mAppDataDir</td>
+<td>&#x2F;data&#x2F;data</td>
+<td>存储应用的私有数据和配置文件，每个apk对应一个包名的目录</td>
+</tr>
+<tr>
+<td>mAppInstallDir</td>
+<td>&#x2F;data&#x2F;app</td>
+<td>用于存放已安装的app应用</td>
+</tr>
+<tr>
+<td>mAppLib32InstallDir</td>
+<td>&#x2F;data&#x2F;app-lib</td>
+<td>用于存放应用的本地库文件（即 .so 文件）</td>
+</tr>
+<tr>
+<td>mAsecInternalPath</td>
+<td>&#x2F;data&#x2F;app-asec</td>
+<td>存放在 Android 早期版本中使用的 ASEC 格式的应用</td>
+</tr>
+<tr>
+<td>mUserAppDataDir</td>
+<td>&#x2F;data&#x2F;user</td>
+<td>用于管理多用户环境中的用户数据，Android支持多用户</td>
+</tr>
+<tr>
+<td>mDrmAppPrivateInstallDir</td>
+<td>&#x2F;data&#x2F;app-private</td>
+<td>用于存放已安装的私有应用</td>
+</tr>
+</tbody></table>
+<h2 id="2-2-扫描系统阶段（PMS-SYSTEM-SCAN-START）读取系统app文件"><a href="#2-2-扫描系统阶段（PMS-SYSTEM-SCAN-START）读取系统app文件" class="headerlink" title="2.2 扫描系统阶段（PMS_SYSTEM_SCAN_START）读取系统app文件"></a><span id="jump2_2"/>2.2 扫描系统阶段（PMS_SYSTEM_SCAN_START）读取系统app文件</h2><p>系统扫描阶段的主要工作有以下3点：</p>
+<ul>
+<li>创建&#x2F;system的子目录，比如&#x2F;system&#x2F;framework、&#x2F;system&#x2F;priv-app和&#x2F;system&#x2F;app等等</li>
+<li>扫描系统文件，比如&#x2F;vendor&#x2F;overlay、&#x2F;system&#x2F;framework、&#x2F;system&#x2F;app等等目录下的文件。</li>
+<li>对扫描到的系统文件做后续处理。</li>
+</ul>
+<p>扫描的目录：</p>
+<table>
+<thead>
+<tr>
+<th>目录</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>app</td>
+<td>存放系统App，包括了谷歌内置的App也有厂商或者运营商提供的App</td>
+</tr>
+<tr>
+<td>framework</td>
+<td>存放应用框架层的jar包</td>
+</tr>
+<tr>
+<td>priv-app</td>
+<td>存放特权App</td>
+</tr>
+<tr>
+<td>lib</td>
+<td>存放so文件</td>
+</tr>
+<tr>
+<td>存放so文件</td>
+<td>存放系统字体文件</td>
+</tr>
+<tr>
+<td>media</td>
+<td>存放系统的各种声音，比如铃声、提示音，以及系统启动播放的动画</td>
+</tr>
+</tbody></table>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="title function_">PackageManagerService</span><span class="params">(Context context, Installer installer,</span></span><br><span class="line"><span class="params">            <span class="type">boolean</span> factoryTest, <span class="type">boolean</span> onlyCore)</span> &#123;</span><br><span class="line">    <span class="comment">//收集供应商包名：/vendor/overlay</span></span><br><span class="line">    <span class="type">File</span> <span class="variable">vendorOverlayDir</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">File</span>(VENDOR_OVERLAY_DIR);</span><br><span class="line">    scanDirLI(vendorOverlayDir, PackageParser.PARSE_IS_SYSTEM</span><br><span class="line">            | PackageParser.PARSE_IS_SYSTEM_DIR, scanFlags | SCAN_TRUSTED_OVERLAY, <span class="number">0</span>);</span><br><span class="line">    </span><br><span class="line">    <span class="comment">//收集包名：/system/framework</span></span><br><span class="line">    scanDirLI(frameworkDir, PackageParser.PARSE_IS_SYSTEM</span><br><span class="line">            | PackageParser.PARSE_IS_SYSTEM_DIR</span><br><span class="line">            | PackageParser.PARSE_IS_PRIVILEGED,</span><br><span class="line">            scanFlags | SCAN_NO_DEX, <span class="number">0</span>);</span><br><span class="line">    </span><br><span class="line">    <span class="comment">//收集私有的系统包名：/system/priv-app</span></span><br><span class="line">    <span class="keyword">final</span> <span class="type">File</span> <span class="variable">privilegedAppDir</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">File</span>(Environment.getRootDirectory(), <span class="string">&quot;priv-app&quot;</span>);</span><br><span class="line">    scanDirLI(privilegedAppDir, PackageParser.PARSE_IS_SYSTEM</span><br><span class="line">            | PackageParser.PARSE_IS_SYSTEM_DIR</span><br><span class="line">            | PackageParser.PARSE_IS_PRIVILEGED, scanFlags, <span class="number">0</span>);</span><br><span class="line">    </span><br><span class="line">    <span class="comment">//收集一般地系统包名：/system/app</span></span><br><span class="line">    <span class="keyword">final</span> <span class="type">File</span> <span class="variable">systemAppDir</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">File</span>(Environment.getRootDirectory(), <span class="string">&quot;app&quot;</span>);</span><br><span class="line">    scanDirLI(systemAppDir, PackageParser.PARSE_IS_SYSTEM</span><br><span class="line">            | PackageParser.PARSE_IS_SYSTEM_DIR, scanFlags, <span class="number">0</span>);</span><br><span class="line">    </span><br><span class="line">    <span class="comment">//收集私有供应商包名：/vendor/priv-app</span></span><br><span class="line">    <span class="keyword">final</span> <span class="type">File</span> <span class="variable">privilegedVendorAppDir</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">File</span>(Environment.getVendorDirectory(), <span class="string">&quot;priv-app&quot;</span>);</span><br><span class="line">    scanDirLI(privilegedVendorAppDir, PackageParser.PARSE_IS_SYSTEM</span><br><span class="line">            | PackageParser.PARSE_IS_SYSTEM_DIR</span><br><span class="line">            | PackageParser.PARSE_IS_PRIVILEGED, scanFlags, <span class="number">0</span>);</span><br><span class="line">    </span><br><span class="line">    <span class="comment">//收集所有的供应商包名：/vendor/app</span></span><br><span class="line">    <span class="type">File</span> <span class="variable">vendorAppDir</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">File</span>(Environment.getVendorDirectory(), <span class="string">&quot;app&quot;</span>);</span><br><span class="line">    vendorAppDir = vendorAppDir.getCanonicalFile();</span><br><span class="line">    scanDirLI(vendorAppDir, PackageParser.PARSE_IS_SYSTEM</span><br><span class="line">            | PackageParser.PARSE_IS_SYSTEM_DIR, scanFlags, <span class="number">0</span>);</span><br><span class="line">    </span><br><span class="line">    <span class="comment">//收集所有OEM包名：/oem/app</span></span><br><span class="line">    <span class="keyword">final</span> <span class="type">File</span> <span class="variable">oemAppDir</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">File</span>(Environment.getOemDirectory(), <span class="string">&quot;app&quot;</span>);</span><br><span class="line">    scanDirLI(oemAppDir, PackageParser.PARSE_IS_SYSTEM</span><br><span class="line">            | PackageParser.PARSE_IS_SYSTEM_DIR, scanFlags, <span class="number">0</span>);</span><br><span class="line">    ...        </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="2-3-扫描Data分区阶段（PMS-DATA-SCAN-START）读取用户App数据"><a href="#2-3-扫描Data分区阶段（PMS-DATA-SCAN-START）读取用户App数据" class="headerlink" title="2.3 扫描Data分区阶段（PMS_DATA_SCAN_START）读取用户App数据"></a><span id="jump2_3"/>2.3 扫描Data分区阶段（PMS_DATA_SCAN_START）读取用户App数据</h2><p>主要作用：</p>
+<ol>
+<li>扫描&#x2F;data&#x2F;app和&#x2F;data&#x2F;app-private目录下的文件。</li>
+<li>遍历possiblyDeletedUpdatedSystemApps列表，<ul>
+<li>注释1处如果这个系统App的包信息不在PMS的变量mPackages中，说明是残留的App信息，后续会删除它的数据。</li>
+<li>注释2处如果这个系统App的包信息在mPackages中，说明是存在于Data分区，不属于系统App，那么移除其系统权限。</li>
+</ul>
+</li>
+<li>遍历mExpectingBetter列表，<ul>
+<li>注释3处根据系统App所在的目录设置扫描的解析参数，</li>
+<li>注释4处的方法内部会将packageName对应的包设置数据（PackageSetting）添加到mSettings的mPackages中。</li>
+<li>注释5处扫描系统App的升级包，最后清除mExpectingBetter列表。</li>
+</ul>
+</li>
+</ol>
+<p>扫描的目录：</p>
+<table>
+<thead>
+<tr>
+<th>目录</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>app</td>
+<td>存储用户自己安装的App</td>
+</tr>
+<tr>
+<td>data</td>
+<td>存储所有已安装的App数据的目录，每个App都有自己单独的子目录</td>
+</tr>
+<tr>
+<td>app-private</td>
+<td>App的私有存储空间</td>
+</tr>
+<tr>
+<td>app-lib</td>
+<td>存储所有App的Jni库</td>
+</tr>
+<tr>
+<td>system</td>
+<td>存放系统配置文件</td>
+</tr>
+<tr>
+<td>anr</td>
+<td>用于存储ANR发生时系统生成的traces.txt文件</td>
+</tr>
+</tbody></table>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="title function_">PackageManagerService</span><span class="params">(Context context, Installer installer,</span></span><br><span class="line"><span class="params">            <span class="type">boolean</span> factoryTest, <span class="type">boolean</span> onlyCore)</span> &#123;</span><br><span class="line">    ...        </span><br><span class="line">    <span class="comment">//如果不是只扫描系统的目录，那么就开始扫描Data分区。</span></span><br><span class="line">    <span class="keyword">if</span> (!mOnlyCore) &#123;</span><br><span class="line">        <span class="comment">//打印扫描Data分区阶段日志</span></span><br><span class="line">        EventLog.writeEvent(EventLogTags.BOOT_PROGRESS_PMS_DATA_SCAN_START,</span><br><span class="line">                SystemClock.uptimeMillis());</span><br><span class="line">        <span class="comment">//扫描/data/app目录下的文件       </span></span><br><span class="line">        scanDirTracedLI(mAppInstallDir, <span class="number">0</span>, scanFlags | SCAN_REQUIRE_KNOWN, <span class="number">0</span>);</span><br><span class="line">        <span class="comment">//扫描/data/app-private目录下的文件   </span></span><br><span class="line">        scanDirTracedLI(mDrmAppPrivateInstallDir, mDefParseFlags</span><br><span class="line">                | PackageParser.PARSE_FORWARD_LOCK,</span><br><span class="line">                scanFlags | SCAN_REQUIRE_KNOWN, <span class="number">0</span>);</span><br><span class="line">        <span class="comment">//扫描完Data分区后，处理possiblyDeletedUpdatedSystemApps列表</span></span><br><span class="line">        <span class="keyword">for</span> (String deletedAppName : possiblyDeletedUpdatedSystemApps) &#123;</span><br><span class="line">            PackageParser.<span class="type">Package</span> <span class="variable">deletedPkg</span> <span class="operator">=</span> mPackages.get(deletedAppName);</span><br><span class="line">            <span class="comment">// 从mSettings.mDisabledSysPackages变量中移除去此应用</span></span><br><span class="line">            mSettings.removeDisabledSystemPackageLPw(deletedAppName);</span><br><span class="line">            String msg;</span><br><span class="line">          <span class="comment">//1：如果这个系统App的包信息不在PMS的变量mPackages中，说明是残留的App信息，后续会删除它的数据。</span></span><br><span class="line">            <span class="keyword">if</span> (deletedPkg == <span class="literal">null</span>) &#123;</span><br><span class="line">                msg = <span class="string">&quot;Updated system package &quot;</span> + deletedAppName</span><br><span class="line">                        + <span class="string">&quot; no longer exists; it&#x27;s data will be wiped&quot;</span>;</span><br><span class="line">                <span class="comment">// Actual deletion of code and data will be handled by later</span></span><br><span class="line">                <span class="comment">// reconciliation step</span></span><br><span class="line">            &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">            <span class="comment">//2：如果这个系统App在mPackages中，说明是存在于Data分区，不属于系统App，那么移除其系统权限。</span></span><br><span class="line">                msg = <span class="string">&quot;Updated system app + &quot;</span> + deletedAppName</span><br><span class="line">                        + <span class="string">&quot; no longer present; removing system privileges for &quot;</span></span><br><span class="line">                        + deletedAppName;</span><br><span class="line">                deletedPkg.applicationInfo.flags &amp;= ~ApplicationInfo.FLAG_SYSTEM;</span><br><span class="line">                <span class="type">PackageSetting</span> <span class="variable">deletedPs</span> <span class="operator">=</span> mSettings.mPackages.get(deletedAppName);</span><br><span class="line">                deletedPs.pkgFlags &amp;= ~ApplicationInfo.FLAG_SYSTEM;</span><br><span class="line">            &#125;</span><br><span class="line">            logCriticalInfo(Log.WARN, msg);</span><br><span class="line">        &#125;</span><br><span class="line">         <span class="comment">//遍历mExpectingBetter列表</span></span><br><span class="line">        <span class="keyword">for</span> (<span class="type">int</span> <span class="variable">i</span> <span class="operator">=</span> <span class="number">0</span>; i &lt; mExpectingBetter.size(); i++) &#123;</span><br><span class="line">            <span class="keyword">final</span> <span class="type">String</span> <span class="variable">packageName</span> <span class="operator">=</span> mExpectingBetter.keyAt(i);</span><br><span class="line">            <span class="keyword">if</span> (!mPackages.containsKey(packageName)) &#123;</span><br><span class="line">                <span class="comment">//得到系统App的升级包路径</span></span><br><span class="line">                <span class="keyword">final</span> <span class="type">File</span> <span class="variable">scanFile</span> <span class="operator">=</span> mExpectingBetter.valueAt(i);</span><br><span class="line">                logCriticalInfo(Log.WARN, <span class="string">&quot;Expected better &quot;</span> + packageName</span><br><span class="line">                        + <span class="string">&quot; but never showed up; reverting to system&quot;</span>);</span><br><span class="line">                <span class="type">int</span> <span class="variable">reparseFlags</span> <span class="operator">=</span> mDefParseFlags;</span><br><span class="line">                <span class="comment">//3：根据系统App所在的目录设置扫描的解析参数</span></span><br><span class="line">                <span class="keyword">if</span> (FileUtils.contains(privilegedAppDir, scanFile)) &#123;</span><br><span class="line">                    reparseFlags = PackageParser.PARSE_IS_SYSTEM</span><br><span class="line">                            | PackageParser.PARSE_IS_SYSTEM_DIR</span><br><span class="line">                            | PackageParser.PARSE_IS_PRIVILEGED;</span><br><span class="line">                &#125; </span><br><span class="line">                ...</span><br><span class="line">                <span class="comment">//将packageName对应的包设置数据（PackageSetting）添加到mSettings的mPackages中</span></span><br><span class="line">                mSettings.enableSystemPackageLPw(packageName);<span class="comment">//4</span></span><br><span class="line">                <span class="keyword">try</span> &#123;</span><br><span class="line">                    <span class="comment">//扫描系统App的升级包</span></span><br><span class="line">                    scanPackageTracedLI(scanFile, reparseFlags, scanFlags, <span class="number">0</span>, <span class="literal">null</span>);<span class="comment">//5</span></span><br><span class="line">                &#125; <span class="keyword">catch</span> (PackageManagerException e) &#123;</span><br><span class="line">                    Slog.e(TAG, <span class="string">&quot;Failed to parse original system package: &quot;</span></span><br><span class="line">                            + e.getMessage());</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">   <span class="comment">//清除mExpectingBetter列表</span></span><br><span class="line">    mExpectingBetter.clear();</span><br><span class="line">...</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h2 id="2-4-扫描结束阶段：PMS-SCAN-END"><a href="#2-4-扫描结束阶段：PMS-SCAN-END" class="headerlink" title="2.4 扫描结束阶段：PMS_SCAN_END"></a><span id="jump2_4"/>2.4 扫描结束阶段：PMS_SCAN_END</h2><p>扫描结束结束阶段主要做了以下几件事（主要就是扫尾操作，清除缓存、判断APK版本等等）：</p>
+<ul>
+<li>如果当前平台SDK版本和上次启动时的SDK版本不同，重新更新APK的授权。</li>
+<li>如果是第一次启动或者是Android M升级后的第一次启动，需要初始化所有用户定义的默认首选App。</li>
+<li>OTA升级后的第一次启动，会清除代码缓存目录。</li>
+<li>把Settings的内容保存到packages.xml中，这样此后PMS再次创建时会读到此前保存的Settings的内容。</li>
+</ul>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">//打印扫描结束阶段日志</span></span><br><span class="line">EventLog.writeEvent(EventLogTags.BOOT_PROGRESS_PMS_SCAN_END,</span><br><span class="line">        SystemClock.uptimeMillis());</span><br><span class="line">Slog.i(TAG, <span class="string">&quot;Time to scan packages: &quot;</span></span><br><span class="line">        + ((SystemClock.uptimeMillis()-startTime)/<span class="number">1000f</span>)</span><br><span class="line">        + <span class="string">&quot; seconds&quot;</span>);</span><br><span class="line"><span class="type">int</span> <span class="variable">updateFlags</span> <span class="operator">=</span> UPDATE_PERMISSIONS_ALL;</span><br><span class="line"><span class="comment">// 如果当前平台SDK版本和上次启动时的SDK版本不同，重新更新APK的授权</span></span><br><span class="line"><span class="keyword">if</span> (ver.sdkVersion != mSdkVersion) &#123;</span><br><span class="line">    Slog.i(TAG, <span class="string">&quot;Platform changed from &quot;</span> + ver.sdkVersion + <span class="string">&quot; to &quot;</span></span><br><span class="line">            + mSdkVersion + <span class="string">&quot;; regranting permissions for internal storage&quot;</span>);</span><br><span class="line">    updateFlags |= UPDATE_PERMISSIONS_REPLACE_PKG | UPDATE_PERMISSIONS_REPLACE_ALL;</span><br><span class="line">&#125;</span><br><span class="line">updatePermissionsLPw(<span class="literal">null</span>, <span class="literal">null</span>, StorageManager.UUID_PRIVATE_INTERNAL, updateFlags);</span><br><span class="line">ver.sdkVersion = mSdkVersion;</span><br><span class="line"><span class="comment">//如果是第一次启动或者是Android M升级后的第一次启动，需要初始化所有用户定义的默认首选App</span></span><br><span class="line"><span class="keyword">if</span> (!onlyCore &amp;&amp; (mPromoteSystemApps || mFirstBoot)) &#123;</span><br><span class="line">    <span class="keyword">for</span> (UserInfo user : sUserManager.getUsers(<span class="literal">true</span>)) &#123;</span><br><span class="line">        mSettings.applyDefaultPreferredAppsLPw(<span class="built_in">this</span>, user.id);</span><br><span class="line">        applyFactoryDefaultBrowserLPw(user.id);</span><br><span class="line">        primeDomainVerificationsLPw(user.id);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line">...</span><br><span class="line"><span class="comment">//OTA后的第一次启动，会清除代码缓存目录。</span></span><br><span class="line"><span class="keyword">if</span> (mIsUpgrade &amp;&amp; !onlyCore) &#123;</span><br><span class="line">    Slog.i(TAG, <span class="string">&quot;Build fingerprint changed; clearing code caches&quot;</span>);</span><br><span class="line">    <span class="keyword">for</span> (<span class="type">int</span> <span class="variable">i</span> <span class="operator">=</span> <span class="number">0</span>; i &lt; mSettings.mPackages.size(); i++) &#123;</span><br><span class="line">        <span class="keyword">final</span> <span class="type">PackageSetting</span> <span class="variable">ps</span> <span class="operator">=</span> mSettings.mPackages.valueAt(i);</span><br><span class="line">        <span class="keyword">if</span> (Objects.equals(StorageManager.UUID_PRIVATE_INTERNAL, ps.volumeUuid)) &#123;</span><br><span class="line">            clearAppDataLIF(ps.pkg, UserHandle.USER_ALL,</span><br><span class="line">                    StorageManager.FLAG_STORAGE_DE | StorageManager.FLAG_STORAGE_CE</span><br><span class="line">                            | Installer.FLAG_CLEAR_CODE_CACHE_ONLY);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    ver.fingerprint = Build.FINGERPRINT;</span><br><span class="line">&#125;</span><br><span class="line">...</span><br><span class="line"><span class="comment">// 把Settings的内容保存到packages.xml中</span></span><br><span class="line">mSettings.writeLPr();</span><br><span class="line">Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);</span><br></pre></td></tr></table></figure>
+
+<h2 id="2-5-准备阶段（PMS-READY）启动PackageInstallerService服务"><a href="#2-5-准备阶段（PMS-READY）启动PackageInstallerService服务" class="headerlink" title="2.5 准备阶段（PMS_READY）启动PackageInstallerService服务"></a><span id="jump2_5"/>2.5 准备阶段（PMS_READY）启动PackageInstallerService服务</h2><p>主要作用就是启动PackageInstallerService服务</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">... </span><br><span class="line"><span class="comment">//1、创建PackageInstallerService服务，用于安装apk时调用</span></span><br><span class="line">mInstallerService = <span class="keyword">new</span> <span class="title class_">PackageInstallerService</span>(context, <span class="built_in">this</span>);<span class="comment">//1</span></span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<h3 id="2-5-1-创建PKIS服务"><a href="#2-5-1-创建PKIS服务" class="headerlink" title="2.5.1 创建PKIS服务"></a><span id="jump2_5_1"/>2.5.1 创建PKIS服务</h3><p>启动服务，当apk安装时，会调用这个服务；<br>具体看另一篇PMS解析文章</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="title function_">PackageInstallerService</span><span class="params">(Context context, PackageManagerService pm)</span> &#123;</span><br><span class="line">    mContext = context;</span><br><span class="line">    mPm = pm;</span><br><span class="line">    <span class="comment">//创建名为”PackageInstaller“的Handler线程</span></span><br><span class="line">    mInstallThread = <span class="keyword">new</span> <span class="title class_">HandlerThread</span>(TAG);</span><br><span class="line">    mInstallThread.start();</span><br><span class="line"></span><br><span class="line">    mInstallHandler = <span class="keyword">new</span> <span class="title class_">Handler</span>(mInstallThread.getLooper());</span><br><span class="line"></span><br><span class="line">    mCallbacks = <span class="keyword">new</span> <span class="title class_">Callbacks</span>(mInstallThread.getLooper());</span><br><span class="line"></span><br><span class="line">    mSessionsFile = <span class="keyword">new</span> <span class="title class_">AtomicFile</span>(</span><br><span class="line">            <span class="keyword">new</span> <span class="title class_">File</span>(Environment.getSystemSecureDirectory(), <span class="string">&quot;install_sessions.xml&quot;</span>));</span><br><span class="line">    mSessionsDir = <span class="keyword">new</span> <span class="title class_">File</span>(Environment.getSystemSecureDirectory(), <span class="string">&quot;install_sessions&quot;</span>);</span><br><span class="line">    mSessionsDir.mkdirs();</span><br><span class="line"></span><br><span class="line">    <span class="keyword">synchronized</span> (mSessions) &#123;</span><br><span class="line">        readSessionsLocked();</span><br><span class="line"></span><br><span class="line">        reconcileStagesLocked(StorageManager.UUID_PRIVATE_INTERNAL);</span><br><span class="line"></span><br><span class="line">        <span class="keyword">final</span> ArraySet&lt;File&gt; unclaimedIcons = newArraySet(</span><br><span class="line">                mSessionsDir.listFiles());</span><br><span class="line"></span><br><span class="line">        <span class="keyword">for</span> (<span class="type">int</span> <span class="variable">i</span> <span class="operator">=</span> <span class="number">0</span>; i &lt; mSessions.size(); i++) &#123;</span><br><span class="line">            <span class="keyword">final</span> <span class="type">PackageInstallerSession</span> <span class="variable">session</span> <span class="operator">=</span> mSessions.valueAt(i);</span><br><span class="line">            unclaimedIcons.remove(buildAppIconFile(session.sessionId));</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        <span class="keyword">for</span> (File icon : unclaimedIcons) &#123;</span><br><span class="line">            icon.delete();</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h1 id="三、具体scanDirLI-扫描方法的作用"><a href="#三、具体scanDirLI-扫描方法的作用" class="headerlink" title="三、具体scanDirLI()扫描方法的作用"></a><span id="jump3"/>三、具体scanDirLI()扫描方法的作用</h1><p>上述第二部分，将初始化分成了五个部分，其中</p>
+<ul>
+<li>扫描系统阶段（PMS_SYSTEM_SCAN_START）：对应系统app</li>
+<li>扫描Data分区阶段（PMS_DATA_SCAN_START）：对应普通app</li>
+</ul>
+<p>两个阶段，会调用scanDirLI()方法，扫描各自文件目录下的app，具体看看这个方法</p>
+<h2 id="3-1-扫描的数据存在mActivities、mServices、mSettings中"><a href="#3-1-扫描的数据存在mActivities、mServices、mSettings中" class="headerlink" title="3.1 扫描的数据存在mActivities、mServices、mSettings中"></a><span id="jump3_1"/>3.1 扫描的数据存在mActivities、mServices、mSettings中</h2><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="keyword">class</span> <span class="title class_">PackageManagerService</span> <span class="keyword">extends</span> <span class="title class_">IPackageManager</span>.Stub &#123;</span><br><span class="line">    <span class="comment">//存储ApplicationInfo的信息，对应app的权限、版本、签名等</span></span><br><span class="line">    <span class="keyword">final</span> Settings mSettings;</span><br><span class="line">    <span class="comment">//存储Activity、Receviers等四大组件</span></span><br><span class="line">    <span class="keyword">final</span> <span class="type">ActivityIntentResolver</span> <span class="variable">mActivities</span> <span class="operator">=</span></span><br><span class="line">            <span class="keyword">new</span> <span class="title class_">ActivityIntentResolver</span>();</span><br><span class="line">    <span class="keyword">final</span> <span class="type">ActivityIntentResolver</span> <span class="variable">mReceivers</span> <span class="operator">=</span></span><br><span class="line">            <span class="keyword">new</span> <span class="title class_">ActivityIntentResolver</span>();</span><br><span class="line">    <span class="keyword">final</span> <span class="type">ServiceIntentResolver</span> <span class="variable">mServices</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">ServiceIntentResolver</span>();</span><br><span class="line">    <span class="keyword">final</span> <span class="type">ProviderIntentResolver</span> <span class="variable">mProviders</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">ProviderIntentResolver</span>();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<table border="1" cellpadding="10" cellspacing="0">
+    <thead>
+        <tr>
+            <th>成员变量</th>
+            <th>存储内容</th>
+            <th>核心功能</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td><code>mActivities</code></td>
+            <td>
+                <ul>
+                    <li>存储每个 <code>Activity</code> 的路径（类名）</li>
+                    <li>与 <code>Activity</code> 相关的 <code>IntentFilter</code> 信息</li>
+                </ul>
+            </td>
+            <td>通过 <code>Intent</code> 解析找到匹配的 <code>Activity</code>，并进行启动</td>
+        </tr>
+        <tr>
+            <td><code>mSettings</code></td>
+            <td>
+                <ul>
+                    <li>系统中所有已安装应用的配置信息</li>
+                    <li>每个应用的组件（<code>Activity</code>、<code>Service</code>、<code>Receiver</code>、<code>Provider</code>）的配置信息</li>
+                    <li>应用的权限声明及授权信息</li>
+                    <li>应用的签名信息、安装路径、版本号等</li>
+                </ul>
+            </td>
+            <td>管理并持久化存储应用程序的配置信息</td>
+        </tr>
+    </tbody>
+</table>
+
+
+<h2 id="3-2-scanDirLI-扫描方法"><a href="#3-2-scanDirLI-扫描方法" class="headerlink" title="3.2 scanDirLI()扫描方法"></a><span id="jump3_2"/>3.2 scanDirLI()扫描方法</h2><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">scanDirLI</span><span class="params">(File dir, <span class="type">int</span> parseFlags, <span class="type">int</span> scanFlags, <span class="type">long</span> currentTime)</span> &#123;</span><br><span class="line">    <span class="keyword">final</span> File[] files = dir.listFiles();</span><br><span class="line">    <span class="comment">//遍历file文件</span></span><br><span class="line">    <span class="keyword">for</span> (File file : files) &#123;</span><br><span class="line">        <span class="keyword">try</span> &#123;</span><br><span class="line">            <span class="comment">//继续调用扫描方法</span></span><br><span class="line">            scanPackageLI(file, parseFlags | PackageParser.PARSE_MUST_BE_APK, scanFlags, currentTime, <span class="literal">null</span>);</span><br><span class="line">        &#125; <span class="keyword">catch</span> (PackageManagerException e) &#123;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">private</span> PackageParser.Package <span class="title function_">scanPackageLI</span><span class="params">(PackageParser.Package pkg, <span class="type">int</span> parseFlags,<span class="type">int</span> scanFlags, <span class="type">long</span> currentTime, UserHandle user)</span> <span class="keyword">throws</span> PackageManagerException &#123;</span><br><span class="line">    <span class="type">boolean</span> <span class="variable">success</span> <span class="operator">=</span> <span class="literal">false</span>;</span><br><span class="line">    <span class="keyword">try</span> &#123;</span><br><span class="line">        <span class="keyword">final</span> PackageParser.<span class="type">Package</span> <span class="variable">res</span> <span class="operator">=</span> scanPackageDirtyLI(pkg, parseFlags, scanFlags, currentTime, user);</span><br><span class="line">        success = <span class="literal">true</span>;</span><br><span class="line">        <span class="keyword">return</span> res;</span><br><span class="line">    &#125; <span class="keyword">finally</span> &#123;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="3-3-scanPackageDirtyLI-具体处理四大组件的解析"><a href="#3-3-scanPackageDirtyLI-具体处理四大组件的解析" class="headerlink" title="3.3 scanPackageDirtyLI()具体处理四大组件的解析"></a><span id="jump3_3"/>3.3 scanPackageDirtyLI()具体处理四大组件的解析</h2><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">private</span> PackageParser.Package <span class="title function_">scanPackageDirtyLI</span><span class="params">(...)</span> &#123;</span><br><span class="line">    <span class="keyword">final</span> <span class="type">File</span> <span class="variable">scanFile</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">File</span>(pkg.codePath);</span><br><span class="line">    <span class="comment">// writer</span></span><br><span class="line">    <span class="keyword">synchronized</span> (mPackages) &#123;</span><br><span class="line">        <span class="comment">// 1、添加Settings信息，存储ApplicationInfo的信息：如权限、签名、版本等；</span></span><br><span class="line">        mSettings.insertPackageSettingLPw(pkgSetting, pkg);</span><br><span class="line">        ...</span><br><span class="line">        <span class="keyword">for</span> (i=<span class="number">0</span>; i&lt;N; i++) &#123;</span><br><span class="line">            PackageParser.<span class="type">Provider</span> <span class="variable">p</span> <span class="operator">=</span> pkg.providers.get(i);</span><br><span class="line">            p.info.processName = fixProcessName(pkg.applicationInfo.processName, p.info.processName, pkg.applicationInfo.uid);</span><br><span class="line">            <span class="comment">//2、存储Provider到数组中</span></span><br><span class="line">            mProviders.addProvider(p);</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        <span class="keyword">for</span> (i=<span class="number">0</span>; i&lt;N; i++) &#123;</span><br><span class="line">            PackageParser.<span class="type">Service</span> <span class="variable">s</span> <span class="operator">=</span> pkg.services.get(i);</span><br><span class="line">            s.info.processName = fixProcessName(pkg.applicationInfo.processName,s.info.processName, pkg.applicationInfo.uid);</span><br><span class="line">            <span class="comment">//3、存储Service到数组中</span></span><br><span class="line">            mServices.addService(s);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">for</span> (i=<span class="number">0</span>; i&lt;N; i++) &#123;</span><br><span class="line">            PackageParser.<span class="type">Activity</span> <span class="variable">a</span> <span class="operator">=</span> pkg.receivers.get(i);</span><br><span class="line">            a.info.processName = fixProcessName(pkg.applicationInfo.processName,a.info.processName, pkg.applicationInfo.uid);</span><br><span class="line">            <span class="comment">//4、存储receivers到数组中</span></span><br><span class="line">            mReceivers.addActivity(a, <span class="string">&quot;receiver&quot;</span>);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">for</span> (i=<span class="number">0</span>; i&lt;N; i++) &#123;</span><br><span class="line">            PackageParser.<span class="type">Activity</span> <span class="variable">a</span> <span class="operator">=</span> pkg.activities.get(i);</span><br><span class="line">            a.info.processName = fixProcessName(pkg.applicationInfo.processName, a.info.processName, pkg.applicationInfo.uid);</span><br><span class="line">            <span class="comment">//5、存储Activity到数组中</span></span><br><span class="line">            mActivities.addActivity(a, <span class="string">&quot;activity&quot;</span>);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> pkg;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>至此PMS就将本地的app文件都解析完成了，</p>
+<ul>
+<li>将系统、普通app的四大组件的信息都存储到PMS中了；</li>
+<li>当AMS启动Activity时就会通过resolveIntent()方法，来获取mActvitys数组的信息；</li>
+</ul>
+<h1 id="四、PMS-performBootDexOpt-优化（系统app、普通app）的dex文件"><a href="#四、PMS-performBootDexOpt-优化（系统app、普通app）的dex文件" class="headerlink" title="四、PMS.performBootDexOpt()优化（系统app、普通app）的dex文件"></a><span id="jump4"/>四、PMS.performBootDexOpt()优化（系统app、普通app）的dex文件</h1><p>主要目的：</p>
+<ul>
+<li>1、筛选出需要dex优化的app</li>
+<li>2、遍历调用dexopt操作优化<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">performBootDexOpt</span><span class="params">()</span> &#123;</span><br><span class="line">   <span class="comment">//1、获取pkgs中最近一周使用过的app[见小节3.2.1]</span></span><br><span class="line">   filterRecentlyUsedApps(pkgs);</span><br><span class="line"></span><br><span class="line">   <span class="comment">//将最近一周的app添加到sortedPkgs</span></span><br><span class="line">   <span class="keyword">for</span> (PackageParser.Package pkg : pkgs) &#123;</span><br><span class="line">       sortedPkgs.add(pkg);</span><br><span class="line">   &#125;</span><br><span class="line"></span><br><span class="line">   <span class="keyword">for</span> (PackageParser.Package pkg : sortedPkgs) &#123;</span><br><span class="line">        ...</span><br><span class="line">       <span class="comment">//2、遍历执行dex优化[见小节3.2.2]</span></span><br><span class="line">       performBootDexOpt(pkg, ++i, total);</span><br><span class="line">   &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+</ul>
+<h2 id="4-1-PKMS-filterRecentlyUsedApps-过滤出需要dexopt优化的app（最近一周使用过的app）"><a href="#4-1-PKMS-filterRecentlyUsedApps-过滤出需要dexopt优化的app（最近一周使用过的app）" class="headerlink" title="4.1 PKMS.filterRecentlyUsedApps()过滤出需要dexopt优化的app（最近一周使用过的app）"></a><span id="jump4_1"/>4.1 PKMS.filterRecentlyUsedApps()过滤出需要dexopt优化的app（最近一周使用过的app）</h2><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">filterRecentlyUsedApps</span><span class="params">(Collection&lt;PackageParser.Package&gt; pkgs)</span> &#123;</span><br><span class="line">     <span class="keyword">if</span> (mLazyDexOpt || (!isFirstBoot() &amp;&amp; mPackageUsage.isHistoricalPackageUsageAvailable())) &#123;</span><br><span class="line">         <span class="type">long</span> <span class="variable">now</span> <span class="operator">=</span> System.currentTimeMillis();</span><br><span class="line">         <span class="keyword">for</span> (Iterator&lt;PackageParser.Package&gt; i = pkgs.iterator(); i.hasNext();) &#123;</span><br><span class="line">             PackageParser.<span class="type">Package</span> <span class="variable">pkg</span> <span class="operator">=</span> i.next();</span><br><span class="line">             <span class="comment">// 过滤出最近使用过的app</span></span><br><span class="line">             <span class="type">long</span> <span class="variable">then</span> <span class="operator">=</span> pkg.mLastPackageUsageTimeInMills;</span><br><span class="line">             <span class="keyword">if</span> (then + mDexOptLRUThresholdInMills &lt; now) &#123;</span><br><span class="line">                 i.remove();</span><br><span class="line">                 skipped++;</span><br><span class="line">             &#125;</span><br><span class="line">         &#125;</span><br><span class="line">     &#125;</span><br><span class="line"> &#125;</span><br></pre></td></tr></table></figure>
+
+<p>获取最近使用的app,其中mDexOptLRUThresholdInMills：</p>
+<ul>
+<li>对于Engineering版本（即测试版），则只会对30分钟之内使用过的app执行dex优化；</li>
+<li>对于用户版本，则会将用户最近一周内使用过的app执行dex优化；</li>
+</ul>
+<h2 id="4-2-PKMS-performBootDexOpt-执行dexopt优化"><a href="#4-2-PKMS-performBootDexOpt-执行dexopt优化" class="headerlink" title="4.2 PKMS.performBootDexOpt()执行dexopt优化"></a><span id="jump4_2"/>4.2 PKMS.performBootDexOpt()执行dexopt优化</h2><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">performBootDexOpt</span><span class="params">(PackageParser.Package pkg, <span class="type">int</span> curr, <span class="type">int</span> total)</span> &#123;</span><br><span class="line">    <span class="keyword">if</span> (!isFirstBoot()) &#123;</span><br><span class="line">        ActivityManagerNative.getDefault().showBootMessage(</span><br><span class="line">              mContext.getResources().getString(R.string.android_upgrading_apk,</span><br><span class="line">                  curr, total), <span class="literal">true</span>);</span><br><span class="line">    &#125;</span><br><span class="line">    PackageParser.<span class="type">Package</span> <span class="variable">p</span> <span class="operator">=</span> pkg;</span><br><span class="line">    <span class="keyword">synchronized</span> (mInstallLock) &#123;</span><br><span class="line">        <span class="comment">//[见小节3.2.3]</span></span><br><span class="line">        mPackageDexOptimizer.performDexOpt(p, <span class="literal">null</span>..);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="type">int</span> <span class="title function_">performDexOpt</span><span class="params">(PackageParser.Package pkg, String[] instructionSets, <span class="type">boolean</span> forceDex, <span class="type">boolean</span> defer, <span class="type">boolean</span> inclDependencies, <span class="type">boolean</span> bootComplete, <span class="type">boolean</span> useJit)</span> &#123;</span><br><span class="line">     <span class="keyword">try</span> &#123;</span><br><span class="line">         <span class="comment">// 最终会调调用dexopt()方法</span></span><br><span class="line">         <span class="keyword">return</span> performDexOptLI(pkg, instructionSets, forceDex, defer, bootComplete,</span><br><span class="line">                 useJit, done);</span><br><span class="line">     &#125; <span class="keyword">finally</span> &#123;</span><br><span class="line">     &#125;</span><br><span class="line"> &#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="4-3-由mInstaller服务承接执行dexopt优化"><a href="#4-3-由mInstaller服务承接执行dexopt优化" class="headerlink" title="4.3 由mInstaller服务承接执行dexopt优化"></a><span id="jump4_3"/>4.3 由mInstaller服务承接执行dexopt优化</h2><p>mInstaller也是个系统服务，和PMS同级别，只是它的名字没叫Service；</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="type">int</span> <span class="title function_">dexopt</span><span class="params">(String apkPath, <span class="type">int</span> uid, String instructionSet, <span class="type">int</span> dexoptNeeded, <span class="type">int</span> dexFlags)</span> &#123;</span><br><span class="line">    ...</span><br><span class="line">    <span class="keyword">return</span> mInstaller.dexopt(apkPath, uid, instructionSet, dexoptNeeded, dexFlags);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>具体optdex优化的源码就不看了，主要会做如下操作：</p>
+<table border="1">
+    <thead>
+        <tr>
+            <th>优化步骤</th>
+            <th>详细描述</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>转换为机器代码</td>
+            <td>将 DEX 文件转换为 ODex（Dalvik）或 OAT（ART）文件，生成适合设备的二进制机器码。</td>
+        </tr>
+        <tr>
+            <td>字节码分析和优化</td>
+            <td>进行方法内联、常量折叠、循环展开等字节码优化，以提高执行效率。</td>
+        </tr>
+        <tr>
+            <td>类加载和预验证</td>
+            <td>预先加载并验证类结构，减少运行时的类加载和验证开销。</td>
+        </tr>
+        <tr>
+            <td>预编译（AOT 编译）</td>
+            <td>在 ART 环境中使用 AOT 编译技术，将 DEX 字节码提前编译为机器码，减少运行时的编译负担。</td>
+        </tr>
+        <tr>
+            <td>JIT 编译优化</td>
+            <td>在运行时对频繁执行的代码路径进行 JIT 编译，进一步提升性能。</td>
+        </tr>
+        <tr>
+            <td>多种架构优化</td>
+            <td>根据设备的处理器架构（ARM、x86、MIPS 等）生成优化后的机器码，充分利用硬件特性。</td>
+        </tr>
+        <tr>
+            <td>减少内存占用</td>
+            <td>优化后的代码减少内存碎片并提高代码加载速度，降低运行时的内存使用。</td>
+        </tr>
+        <tr>
+            <td>共享库和交叉引用优化</td>
+            <td>优化应用程序中的共享库和交叉引用部分，减少代码重复，提高系统效率。</td>
+        </tr>
+        <tr>
+            <td>代码缓存</td>
+            <td>生成的 OAT 文件缓存到 <code>/data/dalvik-cache</code>，启动时直接加载优化后的代码。</td>
+        </tr>
+        <tr>
+            <td>运行时触发条件</td>
+            <td>触发条件包括应用安装/更新、系统更新、以及特定电源状态下（如充电时）的优化操作。</td>
+        </tr>
+    </tbody>
+</table>
+
+<h1 id="五、总结"><a href="#五、总结" class="headerlink" title="五、总结"></a><span id="jump5"/>五、总结</h1><ul>
+<li>（1）从SystemServer启动上说<ul>
+<li>1、startBootstrapServices()中启动PMS.main()</li>
+<li>2、startOtherServices()中继续调用PMS核心方法：<ul>
+<li>performBootDexOpt()、systemReady()</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>（2）PMS.main()方法主要分为五个阶段<ul>
+<li>1、开始阶段：创建Settings保存app安装信息等，开启文件目录<ul>
+<li>1.1 Settings：用于保存所有app的安装信息等</li>
+<li>1.2 SystemConfig：存储应用的权限等信息，如系统应用等</li>
+<li>1.3 在Data分区创建一些目录：如&#x2F;data&#x2F;data 等</li>
+</ul>
+</li>
+<li>2、扫描系统阶段：读取系统级别app、Framework文件</li>
+<li>3、扫描Data分区阶段：读取用户级别App文件</li>
+<li>4、扫描结束阶段：扫尾操作，清除缓存啥的</li>
+<li>5、准备阶段：启动PackageInstallerService服务，用于apk安装的服务</li>
+</ul>
+</li>
+<li>（3）其中第2、3阶段，会读取系统、普通app的Activity等四大组件信息，以及mSettings会存储app的签名、权限等信息<ul>
+<li>scanDirLI()方法</li>
+</ul>
+</li>
+<li>（3）performBootDexOpt()过滤最近一周的app进行dexopt优化</li>
+</ul>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a><span id="jump"/>参考链接</h1><ul>
+<li><a target="_blank" rel="noopener" href="https://juejin.cn/post/6844903649408188429">https://juejin.cn/post/6844903649408188429</a></li>
+<li><a target="_blank" rel="noopener" href="https://gityuan.com/2016/11/06/packagemanager/">https://gityuan.com/2016/11/06/packagemanager/</a></li>
+</ul>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a href="https://irving18.github.io">王征</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://irving18.github.io/2024/07/24/Framework%E7%B3%BB%E7%BB%9F%E7%AF%877-PackageManagerService(PMS)1-%E5%90%AF%E5%8A%A8%E8%BF%87%E7%A8%8B/">https://irving18.github.io/2024/07/24/Framework%E7%B3%BB%E7%BB%9F%E7%AF%877-PackageManagerService(PMS)1-%E5%90%AF%E5%8A%A8%E8%BF%87%E7%A8%8B/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://irving18.github.io" target="_blank">Android高级直通车</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/Android%E8%BF%9B%E9%98%B6/">Android进阶</a><a class="post-meta__tags" href="/tags/Framework/">Framework</a><a class="post-meta__tags" href="/tags/%E7%B3%BB%E7%BB%9F%E6%9C%8D%E5%8A%A1/">系统服务</a><a class="post-meta__tags" href="/tags/PMS/">PMS</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,twitter,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc/sharejs/dist/js/social-share.min.js" defer></script></div></div><div class="post-reward"><div class="reward-button"><i class="fas fa-qrcode"></i>赞助</div><div class="reward-main"><ul class="reward-all"><li class="reward-item"><a href="/img/wechat_pay.png" target="_blank"><img class="post-qr-code-img" src="/img/wechat_pay.png" alt="wechat"/></a><div class="post-qr-code-desc">wechat</div></li></ul></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2024/08/02/Framework%E7%B3%BB%E7%BB%9F%E7%AF%877-PackageManagerService(PMS)2-%E8%8E%B7%E5%8F%96Activity%E4%BF%A1%E6%81%AF/" title="Framework系统篇7-PackageManagerService(PMS)2-获取Activity信息"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">Framework系统篇7-PackageManagerService(PMS)2-获取Activity信息</div></div><div class="info-2"><div class="info-item-1">目录 完整的PMS启动，Activity获取流程图 一、PMS在Activity启动中的作用前述，通过Intent获取ActivityInfo 1、Instrumentation调度execStartActivity() 2、调用至AMS.startActivity()中 3、调用至ActivityStack.startActivityMayWait()中 4、调用ActivityStack.resolveActivity()获取ActivityInfo 5、调用至PMS.resolveIntent()获取ActivityInfo   二、PMS.resolveIntent()获取PMS启动时存储的mActvities、mSetttings的信息 1、PMS.resolveIntent() 2、PMS.queryIntentActivities() 获取ActivityInfo信息 3、PMS.getActivityInfo() mActivities中获取类名、filter规则等信息 &amp;...</div></div></div></a><a class="pagination-related" href="/2024/07/21/Framework%E7%B3%BB%E7%BB%9F%E7%AF%876-SurfaceFlinger&amp;VSYNC%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86/" title="Framework系统篇6-SurfaceFlinger&amp;VSYNC信号处理"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">Framework系统篇6-SurfaceFlinger&VSYNC信号处理</div></div><div class="info-2"><div class="info-item-1"> 努比亚技术团队：https://www.jianshu.com/p/f96ab6646ae3 https://www.androidperformance.com/2021/04/24/android-systrace-smooth-in-action-1/#/%E4%BA%86%E8%A7%A3%E5%8D%A1%E9%A1%BF%E5%8E%9F%E7%90%86 Surface系统变化说明...</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2024/08/02/Framework%E7%B3%BB%E7%BB%9F%E7%AF%877-PackageManagerService(PMS)2-%E8%8E%B7%E5%8F%96Activity%E4%BF%A1%E6%81%AF/" title="Framework系统篇7-PackageManagerService(PMS)2-获取Activity信息"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-08-02</div><div class="info-item-2">Framework系统篇7-PackageManagerService(PMS)2-获取Activity信息</div></div><div class="info-2"><div class="info-item-1">目录 完整的PMS启动，Activity获取流程图 一、PMS在Activity启动中的作用前述，通过Intent获取ActivityInfo 1、Instrumentation调度execStartActivity() 2、调用至AMS.startActivity()中 3、调用至ActivityStack.startActivityMayWait()中 4、调用ActivityStack.resolveActivity()获取ActivityInfo 5、调用至PMS.resolveIntent()获取ActivityInfo   二、PMS.resolveIntent()获取PMS启动时存储的mActvities、mSetttings的信息 1、PMS.resolveIntent() 2、PMS.queryIntentActivities() 获取ActivityInfo信息 3、PMS.getActivityInfo() mActivities中获取类名、filter规则等信息 &amp;...</div></div></div></a><a class="pagination-related" href="/2024/08/24/Framework%E7%B3%BB%E7%BB%9F%E7%AF%877-PackageManagerService(PMS)3-%E5%AE%89%E8%A3%85APK%E8%BF%87%E7%A8%8B/" title="Framework系统篇7-PackageManagerService(PMS)3-安装APK过程"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-08-24</div><div class="info-item-2">Framework系统篇7-PackageManagerService(PMS)3-安装APK过程</div></div><div class="info-2"><div class="info-item-1">目录 一、PackageHandler处理安装消息 1.1 PMS.installStage() 1.2 PackageHandler处理INIT_COPY消息 1.2.1 connectToService()启动DefaultContainerService服务（用于检查和复制可移动文件的服务） 1.2.2 绑定服务后，继续发送MCS_BOUND消息，处理安装   1.3 PackageHandler处理MCS_BOUND消息 1.3.1 安装尝试次数&gt;4次，就放弃安装 1.3.2 handleStartCopy()，开始复制流程 1.3.3 handleReturnCode()，开始安装流程     二、handleStartCopy()复制APK 2.1 PMS.handleStartCopy()复制APK 2.2 FileInstallArgs.copyApk(mContainerService)发送至mContainerService服务 2.3...</div></div></div></a><a class="pagination-related" href="/2024/07/08/Framework%E7%B3%BB%E7%BB%9F%E7%AF%871-Android%E7%B3%BB%E7%BB%9F%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B/" title="Framework系统篇1-Android系统启动流程"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-08</div><div class="info-item-2">Framework系统篇1-Android系统启动流程</div></div><div class="info-2"><div class="info-item-1">[toc]                                            一、系统启动入口 简图中我们关注的重点：  1、core、main、late-start三种类型任务 2、与AMS类似的系统进程是通过servicemanager来获取IBinder对象，从而得到BpBinder，进而通过binder来通信的 3、普通应用间，是通过Service组件，来获取IBinder对象，从而得到BpBinder，进程通过binder来通信的；    &#x2F;system&#x2F;core&#x2F;init&#x2F;init.cpp&#x2F;system&#x2F;core&#x2F;rootdir&#x2F;init.rc  （一）init.rc：标识core、main、late_start类型服务 12345678910111213141516#6.0以前的源码//1、Linux以服务形式启动ServiceManagerservice servicemanager /system/bin/servicemanager   ...</div></div></div></a><a class="pagination-related" href="/2024/07/09/Framework%E7%B3%BB%E7%BB%9F%E7%AF%872-ActivityManagerService(AMS)%E5%90%AF%E5%8A%A8%E7%AF%87/" title="Framework系统篇2-ActivityManagerService(AMS)启动篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-09</div><div class="info-item-2">Framework系统篇2-ActivityManagerService(AMS)启动篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、前述在【Fw-系统启动流程】中已经知道，SystemServer进程的run()方法：  1、startBootstrapServices(); 启动引导服务：AMS、PMS、PowerManagerServic 2、startCoreServices(); 启动核心服务：BatteryService 3、startOtherServices(); 启动其他服务：如WMS  这其中还会调用startBootPhase() 方法，  1、传入不同的phase [feɪz]...</div></div></div></a><a class="pagination-related" href="/2024/07/10/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F/" title="Framework系统篇3-ActivityManagerService(AMS)：Activity启动流程&amp;绘制顺序"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-10</div><div class="info-item-2">Framework系统篇3-ActivityManagerService(AMS)：Activity启动流程&amp;绘制顺序</div></div><div class="info-2"><div class="info-item-1">目录 前述、简述系统启动流程  简图 tips 1、为什么和zygoet通信是Socket呢？ 2、如果是多线程操作时，fork会有问题？     一、Activity启动流程  （1）简化启动App的Activity的流程 （2）Activity整体启动过程   二、Zygoet fork进程  （1）runSelectLoop轮询 （2）fork进程 （3）handleChildProc 调用新进程初始化方法 （4）ActivityThread.main   三、Activity绘制流程  完整流程图 （1）handleLaunchActivity：Window创建 1、onAttach： window创建(即PhoneWindow) WindowManagerImpl创建，并持有mGlobal(即WindowManagerGlobal)   2、onCreate：DecorView创建   （2）handleResumeActivity：mGlobal.add() 0、先执行onResume()回调 1、mGlobal.add(decorview) 并创建root...</div></div></div></a><a class="pagination-related" href="/2024/07/16/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)2%EF%BC%9A%E5%90%AF%E5%8A%A8%E7%AF%87/" title="Framework系统篇4-WindowManagerService(WMS)2：启动篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-16</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)2：启动篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、概述（1）WMS、Surface、SurfaceFlinger关系WMS核心关系：  Surface: 代表画布 WMS: 添加window的过程主要功能是添加Surface,管理所有的Surface布局,以及Z轴排序问题; SurfaceFinger: 将Surface按次序混合并显示到物理屏幕上;  （2）WMS整体认识  一、WMS端： WMS继承于IWindowManager.Stub, 作为Binder服务端; WMS的成员变量mSessions保存着所有的Session对象,Session继承于IWindowSession.Stub, 作为Binder服务端; 成员变量mPolicy: 实例对象为PhoneWindowManager,用于实现各种窗口相关的策略; 成员变量mChoreographer: 用于控制窗口动画,屏幕旋转等操作; 成员变量mDisplayContents: 记录一组DisplayContent对象,这个跟多屏输出相关; 成员变量mTokenMap: 保存所有的WindowToken对象;...</div></div></div></a></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">王征</div><div class="author-info-description"></div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">41</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">18</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">3</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/IRVING18"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="mailto:ivring18@163.com" target="_blank" title="Email"><i class="fas fa-envelope" style="color: #4a7dbe;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content"><span>Android开发者迈向<span style="color:red; weight:bold" >高级Android开发</span>的直通车，总结了各大面试考点！<span></br><span>一个通人性的博主，码字不易，用爱发电。希望大家多多支持。</span><img width="250px" src="/img/wechat_pay.png"></div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#%E7%9B%AE%E5%BD%95"><span class="toc-number">1.</span> <span class="toc-text">目录</span></a></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E5%AE%8C%E6%95%B4%E6%B5%81%E7%A8%8B%E5%9B%BE"><span class="toc-number">2.</span> <span class="toc-text">完整流程图</span></a></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E4%B8%80%E3%80%81%E5%89%8D%E8%BF%B0"><span class="toc-number">3.</span> <span class="toc-text">一、前述</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#1-1-%E5%85%88%E4%BA%86%E8%A7%A3%E4%B8%8BPMS%E7%9A%84%E4%BD%9C%E7%94%A8"><span class="toc-number">3.1.</span> <span class="toc-text">1.1 先了解下PMS的作用</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#1-2-%E4%BB%8ESystemServer%E8%BF%9B%E7%A8%8B%E8%B0%83%E5%BA%A6PMS%E5%90%AF%E5%8A%A8"><span class="toc-number">3.2.</span> <span class="toc-text">1.2 从SystemServer进程调度PMS启动</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1-2-1-%E8%BF%90%E8%A1%8CSystemServer-run-%E6%96%B9%E6%B3%95"><span class="toc-number">3.2.1.</span> <span class="toc-text">1.2.1 运行SystemServer.run()方法</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-2-2-%E5%9C%A8startBootstrapServices-%E4%B8%AD%E5%90%AF%E5%8A%A8PMS-main"><span class="toc-number">3.2.2.</span> <span class="toc-text">1.2.2 在startBootstrapServices()中启动PMS.main()</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-2-3-%E5%9C%A8startOtherServices-%E4%B8%AD%E7%BB%A7%E7%BB%AD%E8%B0%83%E7%94%A8PMS%E6%A0%B8%E5%BF%83%E6%96%B9%E6%B3%95%EF%BC%9AperformBootDexOpt-%E3%80%81systemReady"><span class="toc-number">3.2.3.</span> <span class="toc-text">1.2.3 在startOtherServices()中继续调用PMS核心方法：performBootDexOpt()、systemReady()</span></a></li></ol></li></ol></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E4%BA%8C%E3%80%81PMS-main-%E5%90%AF%E5%8A%A8"><span class="toc-number">4.</span> <span class="toc-text">二、PMS.main()启动</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#2-1-%E5%BC%80%E5%A7%8B%E9%98%B6%E6%AE%B5%EF%BC%88PMS-START%EF%BC%89%E5%88%9B%E5%BB%BASettings%E4%BF%9D%E5%AD%98app%E5%AE%89%E8%A3%85%E4%BF%A1%E6%81%AF%E7%AD%89"><span class="toc-number">4.1.</span> <span class="toc-text">2.1 开始阶段（PMS_START）创建Settings保存app安装信息等</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#2-1-1-Settings%EF%BC%9A%E7%94%A8%E4%BA%8E%E4%BF%9D%E5%AD%98%E6%89%80%E6%9C%89app%E7%9A%84%E5%AE%89%E8%A3%85%E4%BF%A1%E6%81%AF%E7%AD%89"><span class="toc-number">4.1.1.</span> <span class="toc-text">2.1.1 Settings：用于保存所有app的安装信息等</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-1-2-SystemConfig%EF%BC%9A%E5%AD%98%E5%82%A8%E5%BA%94%E7%94%A8%E7%9A%84%E6%9D%83%E9%99%90%E7%AD%89%E4%BF%A1%E6%81%AF%EF%BC%8C%E5%A6%82%E7%B3%BB%E7%BB%9F%E5%BA%94%E7%94%A8%E7%AD%89"><span class="toc-number">4.1.2.</span> <span class="toc-text">2.1.2 SystemConfig：存储应用的权限等信息，如系统应用等</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-1-3-%E5%9C%A8Data%E5%88%86%E5%8C%BA%E5%88%9B%E5%BB%BA%E4%B8%80%E4%BA%9B%E7%9B%AE%E5%BD%95%EF%BC%9A%E5%A6%82-data-data-%E7%AD%89"><span class="toc-number">4.1.3.</span> <span class="toc-text">2.1.3 在Data分区创建一些目录：如&#x2F;data&#x2F;data 等</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#2-2-%E6%89%AB%E6%8F%8F%E7%B3%BB%E7%BB%9F%E9%98%B6%E6%AE%B5%EF%BC%88PMS-SYSTEM-SCAN-START%EF%BC%89%E8%AF%BB%E5%8F%96%E7%B3%BB%E7%BB%9Fapp%E6%96%87%E4%BB%B6"><span class="toc-number">4.2.</span> <span class="toc-text">2.2 扫描系统阶段（PMS_SYSTEM_SCAN_START）读取系统app文件</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#2-3-%E6%89%AB%E6%8F%8FData%E5%88%86%E5%8C%BA%E9%98%B6%E6%AE%B5%EF%BC%88PMS-DATA-SCAN-START%EF%BC%89%E8%AF%BB%E5%8F%96%E7%94%A8%E6%88%B7App%E6%95%B0%E6%8D%AE"><span class="toc-number">4.3.</span> <span class="toc-text">2.3 扫描Data分区阶段（PMS_DATA_SCAN_START）读取用户App数据</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#2-4-%E6%89%AB%E6%8F%8F%E7%BB%93%E6%9D%9F%E9%98%B6%E6%AE%B5%EF%BC%9APMS-SCAN-END"><span class="toc-number">4.4.</span> <span class="toc-text">2.4 扫描结束阶段：PMS_SCAN_END</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#2-5-%E5%87%86%E5%A4%87%E9%98%B6%E6%AE%B5%EF%BC%88PMS-READY%EF%BC%89%E5%90%AF%E5%8A%A8PackageInstallerService%E6%9C%8D%E5%8A%A1"><span class="toc-number">4.5.</span> <span class="toc-text">2.5 准备阶段（PMS_READY）启动PackageInstallerService服务</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#2-5-1-%E5%88%9B%E5%BB%BAPKIS%E6%9C%8D%E5%8A%A1"><span class="toc-number">4.5.1.</span> <span class="toc-text">2.5.1 创建PKIS服务</span></a></li></ol></li></ol></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E4%B8%89%E3%80%81%E5%85%B7%E4%BD%93scanDirLI-%E6%89%AB%E6%8F%8F%E6%96%B9%E6%B3%95%E7%9A%84%E4%BD%9C%E7%94%A8"><span class="toc-number">5.</span> <span class="toc-text">三、具体scanDirLI()扫描方法的作用</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#3-1-%E6%89%AB%E6%8F%8F%E7%9A%84%E6%95%B0%E6%8D%AE%E5%AD%98%E5%9C%A8mActivities%E3%80%81mServices%E3%80%81mSettings%E4%B8%AD"><span class="toc-number">5.1.</span> <span class="toc-text">3.1 扫描的数据存在mActivities、mServices、mSettings中</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#3-2-scanDirLI-%E6%89%AB%E6%8F%8F%E6%96%B9%E6%B3%95"><span class="toc-number">5.2.</span> <span class="toc-text">3.2 scanDirLI()扫描方法</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#3-3-scanPackageDirtyLI-%E5%85%B7%E4%BD%93%E5%A4%84%E7%90%86%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%9A%84%E8%A7%A3%E6%9E%90"><span class="toc-number">5.3.</span> <span class="toc-text">3.3 scanPackageDirtyLI()具体处理四大组件的解析</span></a></li></ol></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E5%9B%9B%E3%80%81PMS-performBootDexOpt-%E4%BC%98%E5%8C%96%EF%BC%88%E7%B3%BB%E7%BB%9Fapp%E3%80%81%E6%99%AE%E9%80%9Aapp%EF%BC%89%E7%9A%84dex%E6%96%87%E4%BB%B6"><span class="toc-number">6.</span> <span class="toc-text">四、PMS.performBootDexOpt()优化（系统app、普通app）的dex文件</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#4-1-PKMS-filterRecentlyUsedApps-%E8%BF%87%E6%BB%A4%E5%87%BA%E9%9C%80%E8%A6%81dexopt%E4%BC%98%E5%8C%96%E7%9A%84app%EF%BC%88%E6%9C%80%E8%BF%91%E4%B8%80%E5%91%A8%E4%BD%BF%E7%94%A8%E8%BF%87%E7%9A%84app%EF%BC%89"><span class="toc-number">6.1.</span> <span class="toc-text">4.1 PKMS.filterRecentlyUsedApps()过滤出需要dexopt优化的app（最近一周使用过的app）</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#4-2-PKMS-performBootDexOpt-%E6%89%A7%E8%A1%8Cdexopt%E4%BC%98%E5%8C%96"><span class="toc-number">6.2.</span> <span class="toc-text">4.2 PKMS.performBootDexOpt()执行dexopt优化</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#4-3-%E7%94%B1mInstaller%E6%9C%8D%E5%8A%A1%E6%89%BF%E6%8E%A5%E6%89%A7%E8%A1%8Cdexopt%E4%BC%98%E5%8C%96"><span class="toc-number">6.3.</span> <span class="toc-text">4.3 由mInstaller服务承接执行dexopt优化</span></a></li></ol></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E4%BA%94%E3%80%81%E6%80%BB%E7%BB%93"><span class="toc-number">7.</span> <span class="toc-text">五、总结</span></a></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E5%8F%82%E8%80%83%E9%93%BE%E6%8E%A5"><span class="toc-number">8.</span> <span class="toc-text">参考链接</span></a></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/20/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service%EF%BC%9AstartService%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-Service：startService源码分析">Framework四大组件篇-Service：startService源码分析</a><time datetime="2024-09-20T07:40:47.000Z" title="发表于 2024-09-20 15:40:47">2024-09-20</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/17/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service%EF%BC%9AbindService%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-Service：bindService源码分析">Framework四大组件篇-Service：bindService源码分析</a><time datetime="2024-09-17T07:40:36.000Z" title="发表于 2024-09-17 15:40:36">2024-09-17</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/16/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service1%E4%BD%BF%E7%94%A8%E7%AF%87/" title="Framework四大组件篇-Service1使用篇">Framework四大组件篇-Service1使用篇</a><time datetime="2024-09-16T07:40:35.000Z" title="发表于 2024-09-16 15:40:35">2024-09-16</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/07/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-ContentProvider%E5%90%AF%E5%8A%A8%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-ContentProvider启动源码分析">Framework四大组件篇-ContentProvider启动源码分析</a><time datetime="2024-09-07T07:39:36.000Z" title="发表于 2024-09-07 15:39:36">2024-09-07</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/08/30/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-BroadCast%E5%8E%9F%E7%90%86%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-BroadCast原理源码分析">Framework四大组件篇-BroadCast原理源码分析</a><time datetime="2024-08-30T07:40:05.000Z" title="发表于 2024-08-30 15:40:05">2024-08-30</time></div></div></div></div></div></div></main><footer id="footer" style="background-image: url(/img/bg.png);"><div id="footer-wrap"><div class="copyright">&copy;2024 By 王征</div><div class="footer_custom_text"><a href=""><img class="icp-icon" src="/img/avatar.jpg"><span>一个通人性的博主</span></a></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js"></script><script src="/js/main.js"></script><div class="js-pjax"></div><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></div></body></html>

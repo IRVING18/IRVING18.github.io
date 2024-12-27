@@ -1,0 +1,210 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="light"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>Framework系统篇4-WindowManagerService(WMS)1：整体认识+概念 | Android高级直通车</title><meta name="author" content="王征"><meta name="copyright" content="王征"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="ffffff"><meta name="description" content="[toc] 一、WMS作用的整体认知  1、首先WMS在启动之后会设置给AMS，也就是AMS会持有WMS的实例，方便后续调用 2、WMS内部 通过WindowManager管理WindowState，即Window的状态等； 通过WindowAnimator处理动画   3、和InputManagerService进行交互，处理输入事件dispatchTouchEvent() 分发触摸事件 4、通">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Framework系统篇4-WindowManagerService(WMS)1：整体认识+概念">
+<meta property="og:url" content="https://irving18.github.io/2024/07/14/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)1%EF%BC%9A%E6%95%B4%E4%BD%93%E8%AE%A4%E8%AF%86+%E6%A6%82%E5%BF%B5/index.html">
+<meta property="og:site_name" content="Android高级直通车">
+<meta property="og:description" content="[toc] 一、WMS作用的整体认知  1、首先WMS在启动之后会设置给AMS，也就是AMS会持有WMS的实例，方便后续调用 2、WMS内部 通过WindowManager管理WindowState，即Window的状态等； 通过WindowAnimator处理动画   3、和InputManagerService进行交互，处理输入事件dispatchTouchEvent() 分发触摸事件 4、通">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://irving18.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2024-07-14T07:38:28.000Z">
+<meta property="article:modified_time" content="2024-12-27T09:06:00.304Z">
+<meta property="article:author" content="王征">
+<meta property="article:tag" content="Android进阶">
+<meta property="article:tag" content="Framework">
+<meta property="article:tag" content="系统服务">
+<meta property="article:tag" content="WMS">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://irving18.github.io/img/avatar.jpg"><link rel="shortcut icon" href="/img/avatar.jpg"><link rel="canonical" href="https://irving18.github.io/2024/07/14/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)1%EF%BC%9A%E6%95%B4%E4%BD%93%E8%AE%A4%E8%AF%86+%E6%A6%82%E5%BF%B5/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', 'ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: undefined,
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":true},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyload: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: 'Framework系统篇4-WindowManagerService(WMS)1：整体认识+概念',
+  isPost: true,
+  isHome: false,
+  isHighlightShrink: false,
+  isToc: true,
+  isShuoshuo: false
+}</script><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="onerror=null;src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">41</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">18</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">3</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 文章</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg" id="page-header" style="background-image: url(/img/bg.png);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">Android高级直通车</span></a><a class="nav-page-title" href="/"><span class="site-name">Framework系统篇4-WindowManagerService(WMS)1：整体认识+概念</span></a></span><div id="menus"><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 文章</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">Framework系统篇4-WindowManagerService(WMS)1：整体认识+概念</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2024-07-14T07:38:28.000Z" title="发表于 2024-07-14 15:38:28">2024-07-14</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2024-12-27T09:06:00.304Z" title="更新于 2024-12-27 17:06:00">2024-12-27</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/Android%E8%BF%9B%E9%98%B6/">Android进阶</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">751</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>2分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><p>[toc]</p>
+<h1 id="一、WMS作用的整体认知"><a href="#一、WMS作用的整体认知" class="headerlink" title="一、WMS作用的整体认知"></a>一、WMS作用的整体认知</h1><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)1%EF%BC%9A%E6%95%B4%E4%BD%93%E8%AE%A4%E8%AF%86+%E6%A6%82%E5%BF%B5_1.jpg" alt="image"></p>
+<ul>
+<li>1、首先WMS在启动之后会设置给AMS，也就是AMS会持有WMS的实例，方便后续调用</li>
+<li>2、WMS内部<ul>
+<li>通过WindowManager管理WindowState，即Window的状态等；</li>
+<li>通过WindowAnimator处理动画</li>
+</ul>
+</li>
+<li>3、和InputManagerService进行交互，处理输入事件dispatchTouchEvent() 分发触摸事件</li>
+<li>4、通过SurfaceControl去SurfaceFlinger中申请Surface空间，将Surface返回给App进程，并管理Surface画布，通过Z轴混合后上帧给SurfaceFlinger进行渲染；</li>
+</ul>
+<h1 id="二、WMS中成员变量的作用"><a href="#二、WMS中成员变量的作用" class="headerlink" title="二、WMS中成员变量的作用"></a>二、WMS中成员变量的作用</h1><ul>
+<li>一、WMS端：<ul>
+<li>WMS继承于IWindowManager.Stub, 作为Binder服务端;</li>
+<li>WMS的成员变量mSessions保存着所有的Session对象,Session继承于IWindowSession.Stub, 作为Binder服务端;</li>
+<li>成员变量mPolicy: 实例对象为PhoneWindowManager,用于实现各种窗口相关的策略;</li>
+<li>成员变量mChoreographer: 用于控制窗口动画,屏幕旋转等操作;</li>
+<li>成员变量mDisplayContents: 记录一组DisplayContent对象,这个跟多屏输出相关;</li>
+<li>成员变量mTokenMap: 保存所有的WindowToken对象; 以IBinder为key,可以是IAppWindowToken或者其他Binder的Bp端;</li>
+</ul>
+</li>
+<li>二、APP端：<ul>
+<li>ActivityRecord.Token extends IApplicationToken.Stub</li>
+<li>成员变量mWindowMap: 保存所有的WindowState对象;以IBinder为key, 是IWindow的Bp端;</li>
+<li>ViewRootImpl.W extends IWindow.Stub</li>
+<li>一般地,每一个窗口都对应一个WindowState对象, 该对象的成员变量mClient用于跟应用端交互,成员变量mToken用于跟AMS交互.</li>
+</ul>
+</li>
+</ul>
+<h2 id="（1）WindowState"><a href="#（1）WindowState" class="headerlink" title="（1）WindowState"></a>（1）WindowState</h2><h3 id="1、IApplicationToken是进程独有的"><a href="#1、IApplicationToken是进程独有的" class="headerlink" title="1、IApplicationToken是进程独有的"></a>1、IApplicationToken是进程独有的</h3><ul>
+<li>在AMS启动Activity时startProcessLocked()，创建进程后attachApplication()时传给AMS的</li>
+<li>是个Binder对象，用来跨进程通信的</li>
+<li>会被存储在ActivityRecord.appToken中；</li>
+</ul>
+<h3 id="2、Activity和windowToken是一对多的"><a href="#2、Activity和windowToken是一对多的" class="headerlink" title="2、Activity和windowToken是一对多的"></a>2、Activity和windowToken是一对多的</h3><ul>
+<li><p>主窗口和 Activity：对于每个 Activity，当它的主窗口创建时，会有一个与该 Activity 相关的 windowToken。这个 windowToken 可以被认为与 Activity 一一对应，因为每个 Activity 的主窗口有且只有一个 windowToken。</p>
+</li>
+<li><p>子窗口（如 Dialog、PopupWindow 等）：一个 Activity 可以有多个子窗口，每个子窗口会有它自己的 windowToken。这些子窗口的 windowToken 是独立的，不同于 Activity 主窗口的 windowToken。因此，Activity 和 windowToken 并不严格一一对应。</p>
+</li>
+</ul>
+<ul>
+<li>在AMS启动Activity时，AS.startActivityLocked中调用WMS.addAppToken()来创建出来的，其中存储着IApplicationToken对象；</li>
+<li>windowToken 提供了一层抽象，使得 WindowManagerService 和具体的 Activity 之间的通信更加灵活。通过使用 windowToken，系统可以更好地管理与窗口相关的状态和信息，比如窗口的可见性、顺序和其他属性。这样可以简化窗口管理的逻辑。</li>
+</ul>
+<h3 id="3、window就是窗口了"><a href="#3、window就是窗口了" class="headerlink" title="3、window就是窗口了"></a>3、window就是窗口了</h3><ul>
+<li>其中token就是windowToken</li>
+</ul>
+<h3 id="4、WindowState和Window是一一对应的"><a href="#4、WindowState和Window是一一对应的" class="headerlink" title="4、WindowState和Window是一一对应的"></a>4、WindowState和Window是一一对应的</h3><p>WindowState和Window是一一对应的，WindowState就是Window在WMS中一个包装；<br>他会被WMS存储在final HashMap&lt;IBinder, WindowState&gt; mWindowMap &#x3D; new HashMap&lt;&gt;();中；</p>
+<ul>
+<li>key就是app进程中的window，也是个IBinder的子类；</li>
+<li>value就是WMS中window的包装类WindowState了；</li>
+</ul>
+<p>换句话说，WindowState就是WMS用来存储window的各种状态的；</p>
+<h3 id="5、Activity"><a href="#5、Activity" class="headerlink" title="5、Activity"></a>5、Activity</h3><ul>
+<li>一个Activity中可以有多个window，但是他们的token都需要指向Activity对应的WIndowToken上；</li>
+</ul>
+<h3 id="另外："><a href="#另外：" class="headerlink" title="另外："></a>另外：</h3><p>WIndowToken就是AppWindowToken的父类，这里合并说明的；</p>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a href="https://irving18.github.io">王征</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://irving18.github.io/2024/07/14/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)1%EF%BC%9A%E6%95%B4%E4%BD%93%E8%AE%A4%E8%AF%86+%E6%A6%82%E5%BF%B5/">https://irving18.github.io/2024/07/14/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)1%EF%BC%9A%E6%95%B4%E4%BD%93%E8%AE%A4%E8%AF%86+%E6%A6%82%E5%BF%B5/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://irving18.github.io" target="_blank">Android高级直通车</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/Android%E8%BF%9B%E9%98%B6/">Android进阶</a><a class="post-meta__tags" href="/tags/Framework/">Framework</a><a class="post-meta__tags" href="/tags/%E7%B3%BB%E7%BB%9F%E6%9C%8D%E5%8A%A1/">系统服务</a><a class="post-meta__tags" href="/tags/WMS/">WMS</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,twitter,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc/sharejs/dist/js/social-share.min.js" defer></script></div></div><div class="post-reward"><div class="reward-button"><i class="fas fa-qrcode"></i>赞助</div><div class="reward-main"><ul class="reward-all"><li class="reward-item"><a href="/img/wechat_pay.png" target="_blank"><img class="post-qr-code-img" src="/img/wechat_pay.png" alt="wechat"/></a><div class="post-qr-code-desc">wechat</div></li></ul></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2024/07/16/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)2%EF%BC%9A%E5%90%AF%E5%8A%A8%E7%AF%87/" title="Framework系统篇4-WindowManagerService(WMS)2：启动篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)2：启动篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、概述（1）WMS、Surface、SurfaceFlinger关系WMS核心关系：  Surface: 代表画布 WMS: 添加window的过程主要功能是添加Surface,管理所有的Surface布局,以及Z轴排序问题; SurfaceFinger: 将Surface按次序混合并显示到物理屏幕上;  （2）WMS整体认识  一、WMS端： WMS继承于IWindowManager.Stub, 作为Binder服务端; WMS的成员变量mSessions保存着所有的Session对象,Session继承于IWindowSession.Stub, 作为Binder服务端; 成员变量mPolicy: 实例对象为PhoneWindowManager,用于实现各种窗口相关的策略; 成员变量mChoreographer: 用于控制窗口动画,屏幕旋转等操作; 成员变量mDisplayContents: 记录一组DisplayContent对象,这个跟多屏输出相关; 成员变量mTokenMap: 保存所有的WindowToken对象;...</div></div></div></a><a class="pagination-related" href="/2024/07/12/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)%EF%BC%9AWindow%E7%9A%84%E4%BD%BF%E7%94%A8%E7%AF%87/" title="Framework系统篇4-WindowManagerService(WMS)：Window的使用篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)：Window的使用篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、Window和WindowManager、WMS的关系 window:它是一个抽象类，具体实现类为 PhoneWindow ，它对 View 进行管理。Window是View的容器，View是Window的具体表现内容； windowManager:是一个接口类，继承自接口 ViewManager ，从它的名称就知道它是用来管理 Window 的，它的实现类为 WindowManagerImpl； WMS:是窗口的管理者，它负责窗口的启动、添加和删除。另外窗口的大小和层级也是由它进行管理的；   二、Window的分类：LayoutParams.type 属性    分类 说明 是否需要权限    Application Window(应用窗口) 例如Activity；【取值范围为1~99】 -   Sub Window(子窗口) 不能独立存在，需要依附在其他窗口，例如PopupWindow，Dialog【取值范围为1000~1999】 -   System...</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2024/07/16/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)2%EF%BC%9A%E5%90%AF%E5%8A%A8%E7%AF%87/" title="Framework系统篇4-WindowManagerService(WMS)2：启动篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-16</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)2：启动篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、概述（1）WMS、Surface、SurfaceFlinger关系WMS核心关系：  Surface: 代表画布 WMS: 添加window的过程主要功能是添加Surface,管理所有的Surface布局,以及Z轴排序问题; SurfaceFinger: 将Surface按次序混合并显示到物理屏幕上;  （2）WMS整体认识  一、WMS端： WMS继承于IWindowManager.Stub, 作为Binder服务端; WMS的成员变量mSessions保存着所有的Session对象,Session继承于IWindowSession.Stub, 作为Binder服务端; 成员变量mPolicy: 实例对象为PhoneWindowManager,用于实现各种窗口相关的策略; 成员变量mChoreographer: 用于控制窗口动画,屏幕旋转等操作; 成员变量mDisplayContents: 记录一组DisplayContent对象,这个跟多屏输出相关; 成员变量mTokenMap: 保存所有的WindowToken对象;...</div></div></div></a><a class="pagination-related" href="/2024/07/18/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)3%EF%BC%9A%E5%90%AF%E5%8A%A8%E7%AA%97%E5%8F%A3/" title="Framework系统篇4-WindowManagerService(WMS)3：启动窗口"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-18</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)3：启动窗口</div></div><div class="info-2"><div class="info-item-1">[toc] https://gityuan.com/2017/01/15/wms_starting_window/ 一、捋清一些概念（1）Activity、window、WindowState、windowToken、IApplicationToken的关系？1、IApplicationToken是进程独有的 在AMS启动Activity时startProcessLocked()，创建进程后attachApplication()时传给AMS的 是个Binder对象，用来跨进程通信的 会被存储在ActivityRecord.appToken中；  2、Activity和windowToken是一对多的 主窗口和 Activity：对于每个 Activity，当它的主窗口创建时，会有一个与该 Activity 相关的 windowToken。这个 windowToken 可以被认为与 Activity 一一对应，因为每个 Activity 的主窗口有且只有一个 windowToken。  子窗口（如 Dialog、PopupWindow 等）：一个 Activity...</div></div></div></a><a class="pagination-related" href="/2024/07/12/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)%EF%BC%9AWindow%E7%9A%84%E4%BD%BF%E7%94%A8%E7%AF%87/" title="Framework系统篇4-WindowManagerService(WMS)：Window的使用篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-12</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)：Window的使用篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、Window和WindowManager、WMS的关系 window:它是一个抽象类，具体实现类为 PhoneWindow ，它对 View 进行管理。Window是View的容器，View是Window的具体表现内容； windowManager:是一个接口类，继承自接口 ViewManager ，从它的名称就知道它是用来管理 Window 的，它的实现类为 WindowManagerImpl； WMS:是窗口的管理者，它负责窗口的启动、添加和删除。另外窗口的大小和层级也是由它进行管理的；   二、Window的分类：LayoutParams.type 属性    分类 说明 是否需要权限    Application Window(应用窗口) 例如Activity；【取值范围为1~99】 -   Sub Window(子窗口) 不能独立存在，需要依附在其他窗口，例如PopupWindow，Dialog【取值范围为1000~1999】 -   System...</div></div></div></a><a class="pagination-related" href="/2024/07/19/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B/" title="Framework系统篇4-WindowManagerService(WMS)4：WMS角度看Activity启动流程"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-19</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)4：WMS角度看Activity启动流程</div></div><div class="info-2"><div class="info-item-1">https://juejin.cn/post/7385107260614295579https://mp.weixin.qq.com/s/n0lzyWAZTHsyOPZZN_Yd3w 目录 一、引言 二、ViewRootImpl和Window、WindowManagerGlobal之间的关系 三、Window （1）Window和WindowManager、WMS的关系 （2）Window的分类 1、Application Window(应用窗口) 2、Sub Window(子窗口) 3、System Window(系统窗口)   （3）Window相关标识   四、WindowManager （1）addView() 监听IMS （2）removeView() 会调用WMS的removeWindow()   五、WMS工作原理 （1）addWindow() （2）removeWindow()   六、WMS: 输入事件派发 （1）核心点 （2）mWindowSession.addToDisplay(mInputChannel);...</div></div></div></a><a class="pagination-related" href="/2024/07/08/Framework%E7%B3%BB%E7%BB%9F%E7%AF%871-Android%E7%B3%BB%E7%BB%9F%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B/" title="Framework系统篇1-Android系统启动流程"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-08</div><div class="info-item-2">Framework系统篇1-Android系统启动流程</div></div><div class="info-2"><div class="info-item-1">[toc]                                            一、系统启动入口 简图中我们关注的重点：  1、core、main、late-start三种类型任务 2、与AMS类似的系统进程是通过servicemanager来获取IBinder对象，从而得到BpBinder，进而通过binder来通信的 3、普通应用间，是通过Service组件，来获取IBinder对象，从而得到BpBinder，进程通过binder来通信的；    &#x2F;system&#x2F;core&#x2F;init&#x2F;init.cpp&#x2F;system&#x2F;core&#x2F;rootdir&#x2F;init.rc  （一）init.rc：标识core、main、late_start类型服务 12345678910111213141516#6.0以前的源码//1、Linux以服务形式启动ServiceManagerservice servicemanager /system/bin/servicemanager   ...</div></div></div></a><a class="pagination-related" href="/2024/07/09/Framework%E7%B3%BB%E7%BB%9F%E7%AF%872-ActivityManagerService(AMS)%E5%90%AF%E5%8A%A8%E7%AF%87/" title="Framework系统篇2-ActivityManagerService(AMS)启动篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-09</div><div class="info-item-2">Framework系统篇2-ActivityManagerService(AMS)启动篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、前述在【Fw-系统启动流程】中已经知道，SystemServer进程的run()方法：  1、startBootstrapServices(); 启动引导服务：AMS、PMS、PowerManagerServic 2、startCoreServices(); 启动核心服务：BatteryService 3、startOtherServices(); 启动其他服务：如WMS  这其中还会调用startBootPhase() 方法，  1、传入不同的phase [feɪz]...</div></div></div></a></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">王征</div><div class="author-info-description"></div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">41</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">18</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">3</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/IRVING18"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="mailto:ivring18@163.com" target="_blank" title="Email"><i class="fas fa-envelope" style="color: #4a7dbe;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content"><span>Android开发者迈向<span style="color:red; weight:bold" >高级Android开发</span>的直通车，总结了各大面试考点！<span></br><span>一个通人性的博主，码字不易，用爱发电。希望大家多多支持。</span><img width="250px" src="/img/wechat_pay.png"></div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#%E4%B8%80%E3%80%81WMS%E4%BD%9C%E7%94%A8%E7%9A%84%E6%95%B4%E4%BD%93%E8%AE%A4%E7%9F%A5"><span class="toc-number">1.</span> <span class="toc-text">一、WMS作用的整体认知</span></a></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E4%BA%8C%E3%80%81WMS%E4%B8%AD%E6%88%90%E5%91%98%E5%8F%98%E9%87%8F%E7%9A%84%E4%BD%9C%E7%94%A8"><span class="toc-number">2.</span> <span class="toc-text">二、WMS中成员变量的作用</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#%EF%BC%881%EF%BC%89WindowState"><span class="toc-number">2.1.</span> <span class="toc-text">（1）WindowState</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1%E3%80%81IApplicationToken%E6%98%AF%E8%BF%9B%E7%A8%8B%E7%8B%AC%E6%9C%89%E7%9A%84"><span class="toc-number">2.1.1.</span> <span class="toc-text">1、IApplicationToken是进程独有的</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2%E3%80%81Activity%E5%92%8CwindowToken%E6%98%AF%E4%B8%80%E5%AF%B9%E5%A4%9A%E7%9A%84"><span class="toc-number">2.1.2.</span> <span class="toc-text">2、Activity和windowToken是一对多的</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3%E3%80%81window%E5%B0%B1%E6%98%AF%E7%AA%97%E5%8F%A3%E4%BA%86"><span class="toc-number">2.1.3.</span> <span class="toc-text">3、window就是窗口了</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4%E3%80%81WindowState%E5%92%8CWindow%E6%98%AF%E4%B8%80%E4%B8%80%E5%AF%B9%E5%BA%94%E7%9A%84"><span class="toc-number">2.1.4.</span> <span class="toc-text">4、WindowState和Window是一一对应的</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5%E3%80%81Activity"><span class="toc-number">2.1.5.</span> <span class="toc-text">5、Activity</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E5%8F%A6%E5%A4%96%EF%BC%9A"><span class="toc-number">2.1.6.</span> <span class="toc-text">另外：</span></a></li></ol></li></ol></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/20/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service%EF%BC%9AstartService%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-Service：startService源码分析">Framework四大组件篇-Service：startService源码分析</a><time datetime="2024-09-20T07:40:47.000Z" title="发表于 2024-09-20 15:40:47">2024-09-20</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/17/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service%EF%BC%9AbindService%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-Service：bindService源码分析">Framework四大组件篇-Service：bindService源码分析</a><time datetime="2024-09-17T07:40:36.000Z" title="发表于 2024-09-17 15:40:36">2024-09-17</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/16/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service1%E4%BD%BF%E7%94%A8%E7%AF%87/" title="Framework四大组件篇-Service1使用篇">Framework四大组件篇-Service1使用篇</a><time datetime="2024-09-16T07:40:35.000Z" title="发表于 2024-09-16 15:40:35">2024-09-16</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/07/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-ContentProvider%E5%90%AF%E5%8A%A8%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-ContentProvider启动源码分析">Framework四大组件篇-ContentProvider启动源码分析</a><time datetime="2024-09-07T07:39:36.000Z" title="发表于 2024-09-07 15:39:36">2024-09-07</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/08/30/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-BroadCast%E5%8E%9F%E7%90%86%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-BroadCast原理源码分析">Framework四大组件篇-BroadCast原理源码分析</a><time datetime="2024-08-30T07:40:05.000Z" title="发表于 2024-08-30 15:40:05">2024-08-30</time></div></div></div></div></div></div></main><footer id="footer" style="background-image: url(/img/bg.png);"><div id="footer-wrap"><div class="copyright">&copy;2024 By 王征</div><div class="footer_custom_text"><a href=""><img class="icp-icon" src="/img/avatar.jpg"><span>一个通人性的博主</span></a></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js"></script><script src="/js/main.js"></script><div class="js-pjax"></div><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></div></body></html>

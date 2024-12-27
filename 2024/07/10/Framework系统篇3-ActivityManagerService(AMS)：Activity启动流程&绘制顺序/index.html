@@ -1,0 +1,842 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="light"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>Framework系统篇3-ActivityManagerService(AMS)：Activity启动流程&amp;绘制顺序 | Android高级直通车</title><meta name="author" content="王征"><meta name="copyright" content="王征"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="ffffff"><meta name="description" content="目录 前述、简述系统启动流程  简图 tips 1、为什么和zygoet通信是Socket呢？ 2、如果是多线程操作时，fork会有问题？     一、Activity启动流程  （1）简化启动App的Activity的流程 （2）Activity整体启动过程   二、Zygoet fork进程  （1）runSelectLoop轮询 （2）fork进程 （3）handleChildProc 调用">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Framework系统篇3-ActivityManagerService(AMS)：Activity启动流程&amp;绘制顺序">
+<meta property="og:url" content="https://irving18.github.io/2024/07/10/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F/index.html">
+<meta property="og:site_name" content="Android高级直通车">
+<meta property="og:description" content="目录 前述、简述系统启动流程  简图 tips 1、为什么和zygoet通信是Socket呢？ 2、如果是多线程操作时，fork会有问题？     一、Activity启动流程  （1）简化启动App的Activity的流程 （2）Activity整体启动过程   二、Zygoet fork进程  （1）runSelectLoop轮询 （2）fork进程 （3）handleChildProc 调用">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://irving18.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2024-07-10T07:39:04.000Z">
+<meta property="article:modified_time" content="2024-12-27T09:06:05.780Z">
+<meta property="article:author" content="王征">
+<meta property="article:tag" content="Android进阶">
+<meta property="article:tag" content="Framework">
+<meta property="article:tag" content="AMS">
+<meta property="article:tag" content="系统服务">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://irving18.github.io/img/avatar.jpg"><link rel="shortcut icon" href="/img/avatar.jpg"><link rel="canonical" href="https://irving18.github.io/2024/07/10/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&amp;%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', 'ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: undefined,
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":true},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyload: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: 'Framework系统篇3-ActivityManagerService(AMS)：Activity启动流程&绘制顺序',
+  isPost: true,
+  isHome: false,
+  isHighlightShrink: false,
+  isToc: true,
+  isShuoshuo: false
+}</script><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="onerror=null;src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">41</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">18</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">3</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 文章</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg" id="page-header" style="background-image: url(/img/bg.png);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">Android高级直通车</span></a><a class="nav-page-title" href="/"><span class="site-name">Framework系统篇3-ActivityManagerService(AMS)：Activity启动流程&amp;绘制顺序</span></a></span><div id="menus"><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 文章</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">Framework系统篇3-ActivityManagerService(AMS)：Activity启动流程&amp;绘制顺序</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2024-07-10T07:39:04.000Z" title="发表于 2024-07-10 15:39:04">2024-07-10</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2024-12-27T09:06:05.780Z" title="更新于 2024-12-27 17:06:05">2024-12-27</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/Android%E8%BF%9B%E9%98%B6/">Android进阶</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">8.7k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>34分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h1 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h1><ul>
+<li><p><a href="#jump1">前述、简述系统启动流程</a></p>
+<ul>
+<li><a href="#jump1_1">简图</a></li>
+<li><a href="#jump1_2">tips</a><ul>
+<li><a href="#jump1_2_1">1、为什么和zygoet通信是Socket呢？</a></li>
+<li><a href="#jump1_2_2">2、如果是多线程操作时，fork会有问题？</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a href="#jump2">一、Activity启动流程</a></p>
+<ul>
+<li><a href="#jump2_1">（1）简化启动App的Activity的流程</a></li>
+<li><a href="#jump2_2">（2）Activity整体启动过程</a></li>
+</ul>
+</li>
+<li><p><a href="#jump22">二、Zygoet fork进程</a></p>
+<ul>
+<li><a href="#jump22_1">（1）runSelectLoop轮询</a></li>
+<li><a href="#jump22_2">（2）fork进程</a></li>
+<li><a href="#jump22_3">（3）handleChildProc 调用新进程初始化方法</a></li>
+<li><a href="#jump22_4">（4）ActivityThread.main</a></li>
+</ul>
+</li>
+<li><p><a href="#jump3">三、Activity绘制流程</a></p>
+<ul>
+<li><a href="#jump3">完整流程图</a></li>
+<li><a href="#jump3_1">（1）handleLaunchActivity：Window创建</a><ul>
+<li><a href="#jump3_1_1">1、onAttach：</a><ul>
+<li><a href="">window创建(即PhoneWindow)</a></li>
+<li><a href="">WindowManagerImpl创建，并持有mGlobal(即WindowManagerGlobal)</a></li>
+</ul>
+</li>
+<li><a href="#jump3_1_2">2、onCreate：DecorView创建</a></li>
+</ul>
+</li>
+<li><a href="#jump3_2">（2）handleResumeActivity：mGlobal.add()</a><ul>
+<li><a href="#jump3_2_0">0、先执行onResume()回调</a></li>
+<li><a href="#jump3_2_1">1、mGlobal.add(decorview) 并创建root &#x3D; ViewRootImpl</a><ul>
+<li><a href="#jump3_2_2">2、ViewRootImpl.requestLayout() 开启绘制流程</a></li>
+<li><a href="#jump3_2_3">3、ViewRootImpl.mWindowSession.addToDisPlay(mInputChannel) 监听输入事件</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#jump3_3">（3）Choregrapher回调TraversalRunnable任务过程</a><ul>
+<li><a href="#jump3_3_1">1、收到postCallback(Choreographer.CALLBACK_TRAVERSAL, mTraversalRunnable) </a></li>
+<li><a href="#jump3_3_2">2、判断是否在主线程中；在主线程执行doScheduleVsync();</a></li>
+<li><a href="#jump3_3_3">3、mDisplayEventReceiver.scheduleVsync();</a></li>
+<li><a href="#jump3_3_4">4、onVsync() 通过Handler发回主线程 &#x3D;&gt; 执行doFrame()</a></li>
+</ul>
+</li>
+<li><a href="#jump3_4">（4）RenderThread渲染</a><ul>
+<li><a href="#jump3_4_0"> 0、关联mSurface</a></li>
+<li><a href="#jump3_4_1"> 1、构建绘制树（RenderNode） updateRootDisplayList</a></li>
+<li><a href="#jump3_4_2"> 2、执行渲染绘制任务 syncAndDrawFrame；（将node合成帧调用SurfaceFlinger渲染）</a></li>
+</ul>
+</li>
+<li><a href="#jump3_5">（5）SurfaceFlinger合成显示</a><ul>
+<li><a href="#jump3_5_1">1、BufferQueue机制</a></li>
+<li><a href="#jump3_5_2">2、sync同步机制</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a href="#jump4">四、检测丢帧方案</a></p>
+<ul>
+<li><a href="#jump4_3">（1）开源组件Tiny Dance</a></li>
+<li><a href="#jump4_1">（2）可以通过Hook Choregrapher来检测卡顿</a></li>
+<li><a href="#jump4_2">（3）利用FrameInfo监控，gfxifo google提供的</a></li>
+</ul>
+</li>
+<li><p><a href="#jump5">五、高频问题</a></p>
+<ul>
+<li><a href="#jump5_1">（1）每16ms会调用一次onDraw()方法吗？不是</a></li>
+<li><a href="#jump5_2">（2）invilidate()方法会立刻刷新吗？不会</a></li>
+<li><a href="#jump5_3">（3）丢帧是因为这个吗？</a></li>
+<li><a href="#jump5_4">（4）VSYNC信号是固定16ms？</a></li>
+<li><a href="#jump5_5">（5）Activity启动后View何时开始绘制（onCreate中还是onResume之后？）</a></li>
+<li><a href="#jump5_6">（6）子线程能不能更新ui？</a><ul>
+<li><a href="">1、在RootViewImpl创建之前去更新是OK的，不会闪退；</a></li>
+<li><a href="">2、SurfaceView 中支持子线程更新UI</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a href="#jump6">六、布局查看器&amp;其他参考链接</a></p>
+<ul>
+<li><p><a href="#jump6">查看布局</a></p>
+</li>
+<li><p><a target="_blank" rel="noopener" href="https://www.jianshu.com/p/37370c1d17fc">努比亚：Android应用启动全流程分析（源码深度剖析）</a></p>
+</li>
+<li><p><a target="_blank" rel="noopener" href="https://blog.csdn.net/Innost/article/details/47254381?spm=1001.2014.3001.5502">深入理解Android卷二 全文-第六章</a></p>
+</li>
+<li><p><a target="_blank" rel="noopener" href="https://www.androidperformance.com/2021/04/24/android-systrace-smooth-in-action-1/#/%E4%BA%86%E8%A7%A3%E5%8D%A1%E9%A1%BF%E5%8E%9F%E7%90%86">Android Systrace 流畅性实战 1</a></p>
+</li>
+</ul>
+</li>
+</ul>
+<p>)</p>
+<h2 id="一、简述系统启动流程"><a href="#一、简述系统启动流程" class="headerlink" title="一、简述系统启动流程"></a><span id="jump1">一、简述系统启动流程</h2><ul>
+<li>（一）Android系统启动<ul>
+<li>（1）init.cpp #main()</li>
+<li>（2）加载init.rc<ul>
+<li>1、core任务：<span style="color:red;">ServiceManager 启动 </span></li>
+<li>2、main任务：<span style="color:red;">Zygoet </span><ul>
+<li>3、Zygoet fork <span style="color:red;">system_server进程 </span><ul>
+<li>4、system_server：<ul>
+<li>启动<span style="color:red;">AMS </span></li>
+<li>启动IMS</li>
+<li>启动WMS</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>（二）App进程启动<ul>
+<li><span style="color:red;">（1）AMS</span>主导</li>
+<li><span style="color:red;">（2）Zygoet</span> fork进程<ul>
+<li>App 进程启动<ul>
+<li>attachApplication(IApplication.stub) 到AMS中</li>
+</ul>
+</li>
+<li>AMS调用H.LAUNCH_ACTIVITY</li>
+<li>App进程：<ul>
+<li>1.创建Decorview</li>
+<li>2.获取WMS 创建PhoneWindow对象；</li>
+<li>3.mGlobal.addView()</li>
+</ul>
+</li>
+</ul>
+</li>
+<li><span style="color:red;">（3）WMS</span>.addView()</li>
+<li><span style="color:red;">（4）IMS</span>，监听屏幕输入；（WMS中介）<ul>
+<li>通过Socket分发到App进程</li>
+</ul>
+</li>
+<li><span style="color:red;">（5）Choreography</span>编舞者监听VSYNC垂直信号<ul>
+<li>监听到VSYNC信号，回调给App开启绘制</li>
+</ul>
+</li>
+<li><span style="color:red;">（6）RenderThread </span>进行渲染</li>
+<li><span style="color:red;">（7）SurfaceFlinger</span>合成显示</li>
+</ul>
+</li>
+</ul>
+<h3 id="启动简图"><a href="#启动简图" class="headerlink" title="启动简图"></a><span id="jump1_1">启动简图</h3><p>首先了解下，系统启动流程；<br>详细版在Binder驱动篇 &amp; 系统启动流程；</p>
+<ul>
+<li>AMS、PMS都运行在System_service 进程内；</li>
+<li>system_service进程也是个apk，framework-res.apk；他里边包含关机时的弹框页面等等；</li>
+</ul>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_1.jpg" alt="image.png"></p>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_2.jpg" alt="系统启动简图、AMS.png"></p>
+<p><span id="jump1_2">tips：</p>
+<h4 id="1、为什么和zygoet通信是Socket呢？"><a href="#1、为什么和zygoet通信是Socket呢？" class="headerlink" title="1、为什么和zygoet通信是Socket呢？"></a><span id="jump1_2_1">1、为什么和zygoet通信是Socket呢？</h4><p>答：</p>
+<ul>
+<li>zygoet需要保障单进程单线程运行，否则会有死锁的风险；<br>所以它没有使用binder机制，因为binder属于多线程运行；</li>
+<li>且这个Socket是系统级别的，端口号普通应用并不能访问，安全性是ok的；</li>
+</ul>
+<h4 id="2、如果是多线程操作时，fork会有问题？"><a href="#2、如果是多线程操作时，fork会有问题？" class="headerlink" title="2、如果是多线程操作时，fork会有问题？"></a><span id="jump1_2_2">2、如果是多线程操作时，fork会有问题？</h4><blockquote>
+<p>fork原理：</p>
+<ul>
+<li>父进程内存拷贝到子进程</li>
+<li>子进程单线程启动；也就是父进程有多个线程时，子进程不会继承过来</li>
+</ul>
+</blockquote>
+<p>若父进程是多线程时：</p>
+<ul>
+<li>1.线程中doit()会将mutex变量加锁</li>
+<li>2.此时fork子进程，<ul>
+<li>那么子进程会拷贝mutex变量到自己的线程中，而且还是加锁的；</li>
+</ul>
+</li>
+<li>3.此时父进程的多线程操作释放mutex时<ul>
+<li>父进程的mutex释放了</li>
+<li>但是子进程的mutex并不会被释放，这就造成子进程死锁了；</li>
+</ul>
+</li>
+</ul>
+<h2 id="一、Activity启动流程"><a href="#一、Activity启动流程" class="headerlink" title="一、Activity启动流程"></a><span id="jump2">一、Activity启动流程</h2><h3 id="（1）简化启动App的Activity的流程；"><a href="#（1）简化启动App的Activity的流程；" class="headerlink" title="（1）简化启动App的Activity的流程；"></a><span id="jump2_1">（1）简化启动App的Activity的流程；</h3><ul>
+<li>AMS通过zygoet fork App进程；</li>
+<li>App进程<ul>
+<li>1、拿到AMS mgr来获取BpBinder</li>
+<li>2、调用attachApplication(IApplicationThread.Stub)，将当前app进程的BBinder设置给AMS进程；方便AMS进程和app交互</li>
+</ul>
+</li>
+<li>AMS进程<ul>
+<li>realStartActivityLocked()调用App进程的ApplicationThreadProxy（BpBinder）</li>
+<li>发送给App进程H.LAUNCH_ACITITY命令（8.0以上换成了EXECUTE_TRANSACTION）<ul>
+<li>8.0以上引入了事务类型，主要目的是减少IPC通信过程；在之前是通过IPC来调用attach&#x2F;Launch等好几次IPC通信；引入事务后可以简化这个过程；</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>APP进程<ul>
+<li>接收到H.LAUNCH_ACTIVITY命令，调用hanldeLaunchActivity()方法；开启绘制流程</li>
+</ul>
+</li>
+</ul>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_3.jpg" alt="image"></p>
+<h3 id="（2）Activity整体启动过程"><a href="#（2）Activity整体启动过程" class="headerlink" title="（2）Activity整体启动过程"></a><span id="jump2_2">（2）Activity整体启动过程</h3><p>详细代码就不贴了，太多了；可以看《深入理解Android 卷2》</p>
+<ul>
+<li>startActivity开始<ul>
+<li>AMS：startActivityAndWait()<ul>
+<li>ActivityStack：startActivityMayWait 和PMS交互通过Intent获取ActivityInfo信息</li>
+<li>ActivityStack：startActivityLocked()<ul>
+<li>① 走<span style="color:red;">onPause</span>过程<ul>
+<li>判断是否有mResumeActivity：即是否有调用方Activity（命令启动时就没有）</li>
+</ul>
+</li>
+<li>② 走新App创建过程<ul>
+<li>startProcessLocked()<ul>
+<li>发送给Zygoet创建进程</li>
+<li>App进程ActivityThread.main()函数；<ul>
+<li>attachApplication()注册app进程的BnBinder给AMS</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>AMS：获取到app的BnBinder对象，<ul>
+<li>bindApplication() 调用APP进程，<ul>
+<li>App进程：创建Application对象；</li>
+<li>App进程：installContentProviders() 初始化ContentProvider并发布；具体看ContentProvider篇</li>
+</ul>
+</li>
+<li>realStartActivity() 调用APP进程<ul>
+<li>App进程：handleLaunchActivity() <span style="color:red;">onCreate()</span>：创建Activity、Window、Decorview</li>
+<li>App进程：hanldeResumeActivity() <span style="color:red;">onResume()</span>：注册view到window上</li>
+<li>App进程：addIdleHanlder()<ul>
+<li>在handler中回调AMS：activityIdle() 最终通过</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>AMS：activityIdle() 最终回调<ul>
+<li>ActivityStack：activityIdleInternal()<ul>
+<li>最终回调mResumeActivity（即上个activity）的<span style="color:red;">onStop()</span>方法</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>【App（新）】的draw()流程单独拿出来详解下<ul>
+<li>draw()<ul>
+<li>此时已经能知道View的具体大小了，就会通过WMS去SurfaceFlinger申请Surface画布回来；</li>
+<li>【WMS】<a target="_blank" rel="noopener" href="http://aospxref.com/android-6.0.1_r9/xref/frameworks/base/core/java/android/view/ViewRootImpl.java">http://aospxref.com/android-6.0.1_r9/xref/frameworks/base/core/java/android/view/ViewRootImpl.java</a><ul>
+<li>ViewRootImpl.relayoutWindow(mSurface)&#x20;</li>
+<li>=&gt; mWindowSession.relayout(mSurface) wms的BinderProxy</li>
+<li>=&gt; WMS.relayoutWindow(mSurface) 去SurfaceFlinger中申请一块Surface空间，通过Binder传会App进程，并赋值给mSurface成员变量；</li>
+</ul>
+</li>
+<li>mAttachInfo.mThreadedRenderer.initializeIfNeeded(mSurface);将mSurface关联给RenderThread线程</li>
+<li>mAttachInfo.mThreadedRenderer.draw()调用RenderThread线程开启绘制流程</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>【RenderThread】：<ul>
+<li>initialzeIfNeeded() 关联mSurface</li>
+<li>updateRootDisplayList() 遍历view树，完成绘制操作命令树的构建；</li>
+<li>syncAndDrawFrame(choreographer.mFrameInfo);唤起Native层绘制线程，调用OpenGL执行渲染任务；绘制到关联的Surface上，放到BufferQueue中；</li>
+</ul>
+</li>
+<li>【SurfaceFlinger】：<ul>
+<li>在开机时启动，并开始轮询；</li>
+<li>处理硬件发来的VSYNC信号，通过DispSync来处理，并生成虚拟的VSYNC信号，发送给App、Sf进程的监听方法；</li>
+<li>SF接收到DispSync的VSYNC信号后，会从BufferQueue中去获取Surface的数据，<ul>
+<li>开始对所有Surface层级进行合成帧，将合成后的帧数据放入FrameBuffer中；</li>
+<li>硬件显示设备会自动解析FrameBuffer中的帧数据，进行展示；</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_4.jpg" alt="AMS.png"></p>
+<p>从PMS获取ActivityInfo的图也粘一下，具体看PMS启动篇<br><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_5.jpg" alt="PMS启动和获取Activity流程.png"></p>
+<p>ContentProvider的启动图，插在这吧，画不下呀</p>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_6.jpg" alt="ContentProvider启动.png"></p>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_7.jpg" alt="image.png"></p>
+<h2 id="二、Zygoet-fork进程"><a href="#二、Zygoet-fork进程" class="headerlink" title="二、Zygoet fork进程"></a><span id="jump22">二、Zygoet fork进程</h2><p>详情在《系统启动流程》中；<br>我们已经知道Zygoet在系统启动时，跟随main 任务组启动：</p>
+<h3 id="（1）runSelectLoop轮询"><a href="#（1）runSelectLoop轮询" class="headerlink" title="（1）runSelectLoop轮询"></a><span id="jump22_1">（1）runSelectLoop轮询</h3><p>在runSelectLoop()方法中，循环等待创建进程的命令</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title function_">runSelectLoop</span><span class="params">(String abiList)</span> <span class="keyword">throws</span> MethodAndArgsCaller &#123;</span><br><span class="line">    <span class="keyword">while</span> (<span class="literal">true</span>) &#123;</span><br><span class="line">        <span class="comment">//runOnce() fork进程</span></span><br><span class="line">        <span class="type">boolean</span> <span class="variable">done</span> <span class="operator">=</span> peers.get(i).runOnce();</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="type">boolean</span> <span class="title function_">runOnce</span><span class="params">()</span> <span class="keyword">throws</span> ZygoteInit.MethodAndArgsCaller &#123;</span><br><span class="line">    <span class="comment">//1、读取socket客户端发送过来的参数列表</span></span><br><span class="line">    args = readArgumentList();</span><br><span class="line">    <span class="comment">//2、fork 进程</span></span><br><span class="line">    pid = Zygote.forkAndSpecialize(parsedArgs.uid, parsedArgs.gid, parsedArgs.gids,</span><br><span class="line">            parsedArgs.debugFlags, rlimits, parsedArgs.mountExternal, parsedArgs.seInfo,</span><br><span class="line">            parsedArgs.niceName, fdsToClose, parsedArgs.instructionSet,</span><br><span class="line">            parsedArgs.appDataDir);</span><br><span class="line">    <span class="comment">//3、调用新进程方法初始化</span></span><br><span class="line">    handleChildProc(parsedArgs, descriptors, childPipeFd, newStderr);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="（2）fork进程"><a href="#（2）fork进程" class="headerlink" title="（2）fork进程"></a><span id="jump22_2">（2）fork进程</h3><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">//fork进程</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">static</span> <span class="type">int</span> <span class="title function_">forkAndSpecialize</span><span class="params">(<span class="type">int</span> uid, <span class="type">int</span> gid, <span class="type">int</span>[] gids, <span class="type">int</span> debugFlags, <span class="type">int</span>[][] rlimits, <span class="type">int</span> mountExternal, String seInfo, String niceName, <span class="type">int</span>[] fdsToClose, String instructionSet, String appDataDir)</span> &#123;</span><br><span class="line">    <span class="comment">//1、前置fork方法，核心是申请堆内存等</span></span><br><span class="line">    VM_HOOKS.preFork(); </span><br><span class="line">    <span class="comment">//2、调用c层方法，继续fork流程</span></span><br><span class="line">    <span class="type">int</span> <span class="variable">pid</span> <span class="operator">=</span> nativeForkAndSpecialize(</span><br><span class="line">              uid, gid, gids, debugFlags, rlimits, mountExternal, seInfo, niceName, fdsToClose,</span><br><span class="line">              instructionSet, appDataDir); <span class="comment">//【见小节9】</span></span><br><span class="line">    ...</span><br><span class="line">    VM_HOOKS.postForkCommon(); <span class="comment">//【见小节11】</span></span><br><span class="line">    <span class="keyword">return</span> pid;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="（3）handleChildProc-调用新进程初始化方法"><a href="#（3）handleChildProc-调用新进程初始化方法" class="headerlink" title="（3）handleChildProc 调用新进程初始化方法"></a><span id="jump22_3">（3）handleChildProc 调用新进程初始化方法</h3><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">handleChildProc</span><span class="params">(Arguments parsedArgs, FileDescriptor[] descriptors, FileDescriptor pipeFd, PrintStream newStderr)</span> <span class="keyword">throws</span> ZygoteInit.MethodAndArgsCaller &#123;</span><br><span class="line">    <span class="comment">//执行目标类的main()方法 </span></span><br><span class="line">    RuntimeInit.zygoteInit(parsedArgs.targetSdkVersion,</span><br><span class="line">                parsedArgs.remainingArgs, <span class="literal">null</span>);</span><br><span class="line">&#125;</span><br><span class="line">过程不再贴出，最终会调用到ActivityThread.main 方法中</span><br><span class="line">（<span class="number">1</span>）handleChildProc</span><br><span class="line">（<span class="number">2</span>）zygoteInit 调度方法</span><br><span class="line">（<span class="number">3</span>）applicationInit</span><br><span class="line">（<span class="number">4</span>）invokeStaticMain</span><br><span class="line">（<span class="number">5</span>）MethodAndArgsCaller</span><br><span class="line">（<span class="number">6</span>）ActivityThread.main</span><br><span class="line"></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">class</span> <span class="title class_">MethodAndArgsCaller</span> <span class="keyword">extends</span> <span class="title class_">Exception</span> <span class="keyword">implements</span> <span class="title class_">Runnable</span> &#123;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">run</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">try</span> &#123;</span><br><span class="line">            <span class="comment">//根据传递过来的参数，此处反射调用ActivityThread.main()方法【见流程17】</span></span><br><span class="line">            mMethod.invoke(<span class="literal">null</span>, <span class="keyword">new</span> <span class="title class_">Object</span>[] &#123; mArgs &#125;);</span><br><span class="line">        &#125; <span class="keyword">catch</span> (IllegalAccessException ex) &#123;</span><br><span class="line">            <span class="keyword">throw</span> <span class="keyword">new</span> <span class="title class_">RuntimeException</span>(ex);</span><br><span class="line">        &#125; <span class="keyword">catch</span> (InvocationTargetException ex) &#123;</span><br><span class="line">            <span class="type">Throwable</span> <span class="variable">cause</span> <span class="operator">=</span> ex.getCause();</span><br><span class="line">            <span class="keyword">if</span> (cause <span class="keyword">instanceof</span> RuntimeException) &#123;</span><br><span class="line">                <span class="keyword">throw</span> (RuntimeException) cause;</span><br><span class="line">            &#125; <span class="keyword">else</span> <span class="keyword">if</span> (cause <span class="keyword">instanceof</span> Error) &#123;</span><br><span class="line">                <span class="keyword">throw</span> (Error) cause;</span><br><span class="line">            &#125;</span><br><span class="line">            <span class="keyword">throw</span> <span class="keyword">new</span> <span class="title class_">RuntimeException</span>(ex);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="（4）ActivityThread-main"><a href="#（4）ActivityThread-main" class="headerlink" title="（4）ActivityThread.main"></a><span id="jump22_4">（4）ActivityThread.main</h3><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title function_">main</span><span class="params">(String[] args)</span> &#123;</span><br><span class="line">    ...</span><br><span class="line">    Environment.initForCurrentUser();</span><br><span class="line">    ...</span><br><span class="line">    Process.setArgV0(<span class="string">&quot;&lt;pre-initialized&gt;&quot;</span>);</span><br><span class="line">    <span class="comment">//创建主线程looper</span></span><br><span class="line">    Looper.prepareMainLooper();</span><br><span class="line"></span><br><span class="line">    <span class="type">ActivityThread</span> <span class="variable">thread</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">ActivityThread</span>();</span><br><span class="line">    <span class="comment">//attach到系统进程</span></span><br><span class="line">    thread.attach(<span class="literal">false</span>);</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (sMainThreadHandler == <span class="literal">null</span>) &#123;</span><br><span class="line">        sMainThreadHandler = thread.getHandler();</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">//主线程进入循环状态</span></span><br><span class="line">    Looper.loop();</span><br><span class="line"></span><br><span class="line">    <span class="keyword">throw</span> <span class="keyword">new</span> <span class="title class_">RuntimeException</span>(<span class="string">&quot;Main thread loop unexpectedly exited&quot;</span>);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="三、Activity启动-绘制流程"><a href="#三、Activity启动-绘制流程" class="headerlink" title="三、Activity启动&amp;绘制流程"></a><span id="jump3">三、Activity启动&amp;绘制流程</h2><p>完整流程图：</p>
+<p>图中主要展示</p>
+<ul>
+<li>创建过程</li>
+<li>WMS接收IMS回调示例</li>
+<li>requestLayout()调用Choreography的过程略过了，因为底下还有详图展示；</li>
+<li>直接跳到draw()方法，简略展示当前Activity通过RenderThread的Surfacce和SurfaceFlinger的交互；</li>
+<li>关于SurfaceFlinger的部分在SurfaceFlinger篇再详解；</li>
+</ul>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_8.jpg" alt="Acitvity绘制流程.png"></p>
+<p>Choreography<br><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_9.jpg" alt="未命名绘图.png"></p>
+<h3 id="（1）handleLaunchActivity：onAttach-Window创建-、onCreate-DecorView创建"><a href="#（1）handleLaunchActivity：onAttach-Window创建-、onCreate-DecorView创建" class="headerlink" title="（1）handleLaunchActivity：onAttach(Window创建)、onCreate(DecorView创建)"></a><span id="jump3_1">（1）handleLaunchActivity：onAttach(Window创建)、onCreate(DecorView创建)</h3><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_10.jpg" alt="v2-1e1b2137259b3ac4cdd232860666a278\_r.png"></p>
+<ul>
+<li><span style="color:red;">ActivityThread </span> #handleLaunchActivity()<ul>
+<li>#performLaunchActivity()<ul>
+<li><span style="color:red;" id="jump3_1_1">1、Activity </span> #attach() window创建过程<ul>
+<li>创建 window &#x3D; new PhoneWindow()</li>
+<li>设置 window #setWindowManger((wm)context.getSysetemService(Context.WINDOW_SERVICE))<ul>
+<li>创建 <span style="color:red;">WindowManagerImpl </span> mWindonManger &#x3D; wm #createLocalWindowManager()<ul>
+<li>创建 new WindowManagerImpl()，类中持有mGlobal，并封装addView()方法；<ul>
+<li>持有单例对象 mGlobal &#x3D; WindowManagerGlobal.getInstance();</li>
+<li>封装addView()方法，调用mGlobal.addView();<ul>
+<li><span style="color:red;">WindowManagerGlobal单例 </span><ul>
+<li>持有mViews，存储所有view</li>
+<li>持有mParams，存储所有params</li>
+<li>持有mRoots，存储所有ViewRootImpl</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li><span style="color:red;" id="jump3_1_2">2、mInstrumentation#callActivityOnCreate()</span> DecorView创建过程<ul>
+<li><span style="color:red;">Activity </span> #performCreate()<ul>
+<li>#onCreate()</li>
+<li>#setContentView(id) 这个方法是用户调用的<ul>
+<li>window #setContentView(id) 即PhoneWindow<ul>
+<li>PhoneWindow中持有 mDecor，并创建new DecorView()<ul>
+<li>mDecor中持有contentView；</li>
+<li>contentView.add(LayoutInflater.infate(id) 添加创建传入的布局id；</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p>至此，DecorView只是创建了，</p>
+<ul>
+<li>并没有window.add() 添加到window上，</li>
+<li>也没有viewRootImpl.requestLayout() 展示在屏幕上；</li>
+</ul>
+<h3 id="（1）handleLaunchActivity源码"><a href="#（1）handleLaunchActivity源码" class="headerlink" title="（1）handleLaunchActivity源码"></a>（1）handleLaunchActivity源码</h3><ul>
+<li>1、创建Activity</li>
+<li>2、attach()方法</li>
+<li>3、onCreate()方法</li>
+</ul>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> Activity <span class="title function_">handleLaunchActivity</span><span class="params">(ActivityClientRecord r)</span> &#123;</span><br><span class="line">    <span class="comment">//初始化WindowMangerGlobal 单例</span></span><br><span class="line">    WindowManagerGlobal.initialize();</span><br><span class="line">    <span class="comment">//调用Activity生命周期方法</span></span><br><span class="line">    <span class="keyword">final</span> <span class="type">Activity</span> <span class="variable">a</span> <span class="operator">=</span> performLaunchActivity(r, customIntent);</span><br><span class="line">    <span class="keyword">return</span> a;</span><br><span class="line">&#125;</span><br><span class="line"><span class="keyword">private</span> Activity <span class="title function_">performLaunchActivity</span><span class="params">(ActivityClientRecord r, Intent customIntent)</span> &#123;</span><br><span class="line">    java.lang.<span class="type">ClassLoader</span> <span class="variable">cl</span> <span class="operator">=</span> appContext.getClassLoader();</span><br><span class="line">    <span class="comment">//1、反射创建Activity</span></span><br><span class="line">    activity = mInstrumentation.newActivity(</span><br><span class="line">            cl, component.getClassName(), r.intent);</span><br><span class="line">    <span class="comment">//2、onAttach()方法</span></span><br><span class="line">    activity.attach(appContext, <span class="built_in">this</span>, getInstrumentation(), r.token,</span><br><span class="line">            r.ident, app, r.intent, r.activityInfo, title, r.parent,</span><br><span class="line">            r.embeddedID, r.lastNonConfigurationInstances, config,</span><br><span class="line">            r.referrer, r.voiceInteractor, window, r.activityConfigCallback,</span><br><span class="line">            r.assistToken, r.shareableActivityToken);</span><br><span class="line">    <span class="comment">//3、onCreate()方法</span></span><br><span class="line">    mInstrumentation.callActivityOnCreate(activity, r.state);</span><br><span class="line">    <span class="keyword">return</span> activity;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>attach方法：</p>
+<ul>
+<li>创建PhoneWindow对象，</li>
+<li>创建并持有WindowManagerImpl，用于和WMS通信；</li>
+</ul>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">final</span> <span class="keyword">void</span> <span class="title function_">attach</span><span class="params">(..)</span> &#123;</span><br><span class="line">    <span class="comment">//1、创建Window对象</span></span><br><span class="line">    mWindow = <span class="keyword">new</span> <span class="title class_">PhoneWindow</span>(<span class="built_in">this</span>, window, activityConfigCallback);</span><br><span class="line">    <span class="comment">//2、获取WMS对象，并创建WindowMangerImpl对象</span></span><br><span class="line">    mWindow.setWindowManager((WindowManager)context.getSystemService(Context.WINDOW_SERVICE),...);</span><br><span class="line">&#125;</span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">WindowManagerImpl</span> <span class="keyword">implements</span> <span class="title class_">WindowManager</span> &#123;</span><br><span class="line">    <span class="comment">//持有mGlobal单例</span></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">WindowManagerGlobal</span> <span class="variable">mGlobal</span> <span class="operator">=</span> WindowManagerGlobal.getInstance();</span><br><span class="line">    <span class="comment">//当前Window</span></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> Window mParentWindow;</span><br><span class="line">    <span class="comment">//用于和WMS进程间通信的Binder</span></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> IBinder mWindowContextToken;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>源码总结：</p>
+<ol>
+<li>创建Window抽象类的子类PhoneWindow类的实例对象;</li>
+<li>为PhoneWindow类对象设置WindowManager对象;<br>为PhoneWindow类对象创建1个DecroView类对象(根据所选的主题样式增加);</li>
+<li>为DecroView类对象中的content增加Activity中设置的布局文件。</li>
+<li>此时，DecorView(即顶层View)已创建和添加Activity中设置的布局文件中，但目前仍未显示出来，即不可见。</li>
+</ol>
+<h3 id="（2）handleResumeActivity："><a href="#（2）handleResumeActivity：" class="headerlink" title="（2）handleResumeActivity："></a><span id="jump3_2">（2）handleResumeActivity：</h3><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_11.jpg" alt="image.png"></p>
+<h4 id="0、先执行onResume-回调"><a href="#0、先执行onResume-回调" class="headerlink" title="0、先执行onResume()回调"></a><span id="jump3_2_0">0、先执行onResume()回调</h4><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">handleResumeActivity</span><span class="params">(ActivityClientRecord r)</span> &#123;</span><br><span class="line">    <span class="comment">//1、执行onRestart()；onResume()生命周期方法；</span></span><br><span class="line">    <span class="keyword">if</span> (!performResumeActivity(r, finalStateRequest, reason)) &#123;</span><br><span class="line">        <span class="keyword">return</span>;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">final</span> <span class="type">Activity</span> <span class="variable">a</span> <span class="operator">=</span> r.activity;</span><br><span class="line">    r.window = r.activity.getWindow();</span><br><span class="line">    <span class="type">View</span> <span class="variable">decor</span> <span class="operator">=</span> r.window.getDecorView();</span><br><span class="line">    decor.setVisibility(View.INVISIBLE);</span><br><span class="line">    <span class="type">ViewManager</span> <span class="variable">wm</span> <span class="operator">=</span> a.getWindowManager();</span><br><span class="line">    WindowManager.<span class="type">LayoutParams</span> <span class="variable">l</span> <span class="operator">=</span> r.window.getAttributes();</span><br><span class="line">    a.mDecor = decor;</span><br><span class="line">    </span><br><span class="line">    <span class="comment">//2、将Decorview设置给WindowManager</span></span><br><span class="line">    wm.addView(decor, l);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h4 id="1、mGlobal-add-decorview-并创建root-ViewRootImpl-decorView"><a href="#1、mGlobal-add-decorview-并创建root-ViewRootImpl-decorView" class="headerlink" title="1、mGlobal.add(decorview) 并创建root &#x3D; ViewRootImpl(decorView)"></a><span id="jump3_2_1">1、mGlobal.add(decorview) 并创建root &#x3D; ViewRootImpl(decorView)</h4><ul>
+<li><span style="color:red;">ActivityThread </span> #handleResumeActivity()<ul>
+<li><span style="color:red;">（一）Activity 生命周期方法</span> #performResume()<ul>
+<li><span style="color:red;">Activity</span> #performRestart() onStart()流程；</li>
+<li>mInstrumentation#callActivityOnResume(this);<ul>
+<li>Activity #onResume()流程</li>
+</ul>
+</li>
+</ul>
+</li>
+<li><span style="color:red;">（二）创建ViewRootImpl过程</span><ul>
+<li>（1）拿到ActivityClientRecord r</li>
+<li>（2）获取window &#x3D; r.activity.getWindow()<ul>
+<li>获取decorview &#x3D; r.window.getDecorView()</li>
+</ul>
+</li>
+<li>（3）获取windowManger &#x3D; r.activity.getWindowManager()<ul>
+<li>mPhoneWindow.addView(decorView)</li>
+<li>添加到wm中：mGlobal.add(decorView)<ul>
+<li>&lt;1&gt; 创建root &#x3D; new ViewRootImpl()<ul>
+<li>ViewRootImpl 中持有mChoreographer</li>
+</ul>
+</li>
+<li>&lt;2&gt; mViews.add(decorview) 存储view</li>
+<li>&lt;3&gt; mRoots.add(root) 存储root</li>
+<li>&lt;4&gt; root.setView(mDecor);设置DecorView给root<ul>
+<li>1.enableHardwareAcceleration(attrs); 初始化RenderThread渲染线程运行环境</li>
+<li>2.#requestLayout(); 开启绘制流程，具体流程在下边</li>
+<li>3.mWindowSession.addToDisplay(mInputChannel) 开始监听屏幕输入事件</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br></pre></td><td class="code"><pre><span class="line">#WindowMangerImpl.java</span><br><span class="line"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">addView</span><span class="params">(<span class="meta">@NonNull</span> View view, <span class="meta">@NonNull</span> ViewGroup.LayoutParams params)</span> &#123;</span><br><span class="line">    mGlobal.addView(view, params, mContext.getDisplayNoVerify(), mParentWindow,</span><br><span class="line">            mContext.getUserId());</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"># WindowManagerGlobal.java</span><br><span class="line"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">addView</span><span class="params">(View view, ViewGroup.LayoutParams params,</span></span><br><span class="line"><span class="params">                    Display display, Window parentWindow, <span class="type">int</span> userId)</span> &#123;</span><br><span class="line">    <span class="comment">//1、创建ViewRootImpl</span></span><br><span class="line">    root = <span class="keyword">new</span> <span class="title class_">ViewRootImpl</span>(view.getContext(), display);</span><br><span class="line">    <span class="comment">//2、维护ViewRootImpl、view、params</span></span><br><span class="line">    mViews.add(view);</span><br><span class="line">    mRoots.add(root);</span><br><span class="line">    mParams.add(wparams);</span><br><span class="line">    <span class="comment">//3、设置view给ViewRootImpl</span></span><br><span class="line">    root.setView(view, wparams, panelParentView, userId);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">#ViewRootImpl.java</span><br><span class="line"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">setView</span><span class="params">(View view, WindowManager.LayoutParams attrs, View panelParentView,</span></span><br><span class="line"><span class="params">                    <span class="type">int</span> userId)</span> &#123;</span><br><span class="line">    <span class="comment">//开启绘制流程</span></span><br><span class="line">    <span class="keyword">synchronized</span> (<span class="built_in">this</span>) &#123;</span><br><span class="line">        ...</span><br><span class="line">        requestLayout();</span><br><span class="line">        <span class="comment">//创建输入事件监听channel</span></span><br><span class="line">        mInputChannel = <span class="keyword">new</span> <span class="title class_">InputChannel</span>();</span><br><span class="line">        <span class="comment">//通过WMS中转分发输入事件，WMS中持有InputManagerService对象；</span></span><br><span class="line">        res = mWindowSession.addToDisplay(mWindow, .. mInputChannel);</span><br><span class="line">        mInputEventReceiver = <span class="keyword">new</span> <span class="title class_">WindowInputEventReceiver</span>(mInputChannel,</span><br><span class="line">                            Looper.myLooper());</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h4 id="2、ViewRootImpl-requestLayout-开启绘制流程"><a href="#2、ViewRootImpl-requestLayout-开启绘制流程" class="headerlink" title="2、ViewRootImpl.requestLayout() 开启绘制流程"></a><span id="jump3_2_2">2、ViewRootImpl.requestLayout() 开启绘制流程</h4><ul>
+<li>root #requestLayout(); 开启绘制流程<ul>
+<li>scheduleTraversals()<ul>
+<li>（1）发送同步屏障 mHandler.getLooper().getQueue().postSyncBarrier();</li>
+<li>（2）发送同步消息：mChoreographer.postCallback(Choreographer.CALLBACK_TRAVERSAL, mTraversalRunnable, null);<ul>
+<li>msg.setAsynchronous(true);</li>
+<li>mHandler.sendMessageAtTime(msg, dueTime);</li>
+</ul>
+</li>
+<li>=&#x3D;&#x3D;&#x3D;》Choregrapher具体发送过程在下边</li>
+<li>（3）最终Handler执行到同步消息后，执行TraversalRunnable任务<ul>
+<li>执行doTraversal()<ul>
+<li>（1）取消同步屏障：mHandler.getLooper().getQueue().removeSyncBarrier(mTraversalBarrier);</li>
+<li>（2）performTraversals(); 开始绘制流程<ul>
+<li>performMeasure() 测量</li>
+<li>performLayout() layout</li>
+<li>performDraw() 绘制</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br></pre></td><td class="code"><pre><span class="line">#ViewRootImpl.java</span><br><span class="line"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">requestLayout</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="keyword">if</span> (!mHandlingLayoutInLayoutRequest) &#123;</span><br><span class="line">        <span class="comment">//1、检查是否在主线程，这也是不能在子线程更新ui的原因；</span></span><br><span class="line">        <span class="comment">// 所以在onResume之前，在子线程更新ui不会崩溃；</span></span><br><span class="line">        checkThread();</span><br><span class="line">        <span class="comment">//2、开启绘制任务</span></span><br><span class="line">        scheduleTraversals();</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">void</span> <span class="title function_">scheduleTraversals</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="comment">//1、发送同步屏障</span></span><br><span class="line">    mTraversalBarrier = mHandler.getLooper().getQueue().postSyncBarrier();</span><br><span class="line">    <span class="comment">//2、注册TraversalRunnable任务给Choreography</span></span><br><span class="line">    mChoreographer.postCallback(</span><br><span class="line">            Choreographer.CALLBACK_TRAVERSAL, mTraversalRunnable, <span class="literal">null</span>);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">//TraversalRunnable任务;</span></span><br><span class="line"><span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">TraversalRunnable</span> <span class="keyword">implements</span> <span class="title class_">Runnable</span> &#123;</span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">run</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="comment">//在Choreographer中会再VSYNC时回调到这里</span></span><br><span class="line">        doTraversal();</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">void</span> <span class="title function_">doTraversal</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="comment">//1、取消同步屏障</span></span><br><span class="line">    mHandler.getLooper().getQueue().removeSyncBarrier(mTraversalBarrier);</span><br><span class="line">    <span class="comment">//2、绘制</span></span><br><span class="line">    performTraversals();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">performTraversals</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="comment">//1、测量</span></span><br><span class="line">    performMeasure(childWidthMeasureSpec, childHeightMeasureSpec);</span><br><span class="line">    <span class="comment">//2、布局</span></span><br><span class="line">    performLayout(lp, mWidth, mHeight);</span><br><span class="line">    <span class="comment">//3、画布</span></span><br><span class="line">    <span class="keyword">if</span> (!performDraw() &amp;&amp; mSyncBufferCallback != <span class="literal">null</span>) &#123;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>源码总结</p>
+<ol>
+<li>将DecorView对象添加到WindowManager中;<br>创建ViewRootImpl对象;</li>
+<li>WindowManager将DecorView对象交给ViewRootImpl对象;</li>
+<li>ViewRootImpl对象通过Handler向主线程发送了一条触发遍历操作的消息：performTraversals()；该方法用于执行View的绘制流程（measure、layout、draw）。</li>
+</ol>
+<h4 id="3、ViewRootImpl-mWindowSession-addToDisPlay-mInputChannel-监听输入事件"><a href="#3、ViewRootImpl-mWindowSession-addToDisPlay-mInputChannel-监听输入事件" class="headerlink" title="3、ViewRootImpl.mWindowSession.addToDisPlay(mInputChannel) 监听输入事件"></a><span id="jump3_2_3">3、ViewRootImpl.mWindowSession.addToDisPlay(mInputChannel) 监听输入事件</h4><p>通过WMS中持有的InputManagerService来中转回调到mInputChannel中去；<br>具体代码看WMS那篇文章吧，这里就不详细介绍了；</p>
+<p>主要作用就是通过WMS中转，监听到InputManagerService的输入事件，然后分发到view上去；</p>
+<ul>
+<li>（1）WMS持有IMS</li>
+<li>（2）在ViewRootImpl.setView()时，会设置inputChannel给WMS</li>
+<li>（3）IMS开启两个Socket，用于和app进程通信，传递屏幕输入事件<ul>
+<li>IMS中InputReader是读屏幕事件的</li>
+<li>IMS中InputDispatcher负责将事件通过Socket传给app进程；</li>
+</ul>
+</li>
+</ul>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">#ViewRootImpl.java</span><br><span class="line"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">setView</span><span class="params">(View view, WindowManager.LayoutParams attrs, View panelParentView,</span></span><br><span class="line"><span class="params">                    <span class="type">int</span> userId)</span> &#123;</span><br><span class="line">    <span class="comment">//开启绘制流程</span></span><br><span class="line">    <span class="keyword">synchronized</span> (<span class="built_in">this</span>) &#123;</span><br><span class="line">        ...</span><br><span class="line">        <span class="comment">//1、开启绘制硬件加速，初始化RenderThread渲染线程运行环境</span></span><br><span class="line">         enableHardwareAcceleration(attrs);</span><br><span class="line">        <span class="comment">//2、调用Choreography开启绘制流程</span></span><br><span class="line">        requestLayout();</span><br><span class="line">        <span class="comment">//3、监听IMS屏幕输入事件</span></span><br><span class="line">        <span class="comment">//创建输入事件监听channel</span></span><br><span class="line">        mInputChannel = <span class="keyword">new</span> <span class="title class_">InputChannel</span>();</span><br><span class="line">        <span class="comment">//通过WMS中转分发输入事件，WMS中持有InputManagerService对象；</span></span><br><span class="line">        res = mWindowSession.addToDisplay(mWindow, .. mInputChannel);</span><br><span class="line">        mInputEventReceiver = <span class="keyword">new</span> <span class="title class_">WindowInputEventReceiver</span>(mInputChannel,</span><br><span class="line">                            Looper.myLooper());</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_12.jpg" alt="image.png"></p>
+<h3 id="（3）Choregrapher-回调TraversalRunnable任务过程；"><a href="#（3）Choregrapher-回调TraversalRunnable任务过程；" class="headerlink" title="（3）Choregrapher 回调TraversalRunnable任务过程；"></a><span id="jump3_3">（3）Choregrapher 回调TraversalRunnable任务过程；</h3><blockquote>
+<p>Choreographer 的引入，主要是配合系统Vsync垂直同步机制（Android“黄油计划”中引入的机制之一，<br>1、协调APP生成UI数据和SurfaceFlinger合成图像，避免Tearing画面撕裂的现象）<br>2、给上层 App 的渲染提供一个稳定的 Message 处理的时机，也就是 Vsync 到来的时候 ，系统通过对 Vsync 信号周期的调整，来控制每一帧绘制操作的时机。Choreographer 扮演 Android 渲染链路中承上启下的角色：</p>
+</blockquote>
+<ul>
+<li>承上：负责接收和处理 App 的各种更新消息和回调，等到 Vsync 到来的时候统一处理。比如集中处理 Input(主要是 Input 事件的处理) 、Animation(动画相关)、Traversal(包括 measure、layout、draw 等操作) ，判断卡顿掉帧情况，记录 CallBack 耗时等；</li>
+<li>启下：负责请求和接收 Vsync 信号。接收 Vsync 事件回调(通过 FrameDisplayEventReceiver.onVsync )，请求 Vsync(FrameDisplayEventReceiver.scheduleVsync) 。</li>
+</ul>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_13.jpg" alt="image.png"></p>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_14.jpg" alt="aHR0cHM6Ly9tbWJpei5xcGljLmNuL21tYml6X3BuZy9kNGhvWUpseE9qTlVBUlg1UG5pYjIwcDJiUGJsOVRVTkNIMFNRQjBwTER0cXUxeG9VRFZ3bzdJT0RuVVlFamhnUmlhc3RmNHhNc3lQb1dDNW5DUjhpYWNudy82NDA.png"></p>
+<h4 id="1、收到postCallback-Choreographer-CALLBACK-TRAVERSAL-mTraversalRunnable"><a href="#1、收到postCallback-Choreographer-CALLBACK-TRAVERSAL-mTraversalRunnable" class="headerlink" title=" 1、收到postCallback(Choreographer.CALLBACK_TRAVERSAL, mTraversalRunnable)"></a><span id="jump3_3_1"> 1、收到postCallback(Choreographer.CALLBACK_TRAVERSAL, mTraversalRunnable)</h4><ul>
+<li>通过key：CALLBACK_TRAVERSAL，将Runnable先存储到mCallbackQueues队列里；方便后续调用；<ul>
+<li>注意这个Runnable就是上文中的TraversalRunnable</li>
+</ul>
+</li>
+</ul>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br></pre></td><td class="code"><pre><span class="line">#Choreographer.java</span><br><span class="line"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">postCallback</span><span class="params">(<span class="type">int</span> callbackType, Runnable action, Object token)</span> &#123;</span><br><span class="line">    postCallbackDelayed(callbackType, action, token, <span class="number">0</span>);</span><br><span class="line">&#125;</span><br><span class="line"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">postCallbackDelayed</span><span class="params">(<span class="type">int</span> callbackType, Runnable action, Object token, <span class="type">long</span> delayMillis)</span> &#123;</span><br><span class="line">    postCallbackDelayedInternal(callbackType, action, token, delayMillis);</span><br><span class="line">&#125;</span><br><span class="line"><span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">postCallbackDelayedInternal</span><span class="params">(<span class="type">int</span> callbackType, Object action, Object token, <span class="type">long</span> delayMillis)</span> &#123;</span><br><span class="line">    <span class="keyword">synchronized</span> (mLock) &#123;</span><br><span class="line">        <span class="keyword">final</span> <span class="type">long</span> <span class="variable">now</span> <span class="operator">=</span> SystemClock.uptimeMillis();</span><br><span class="line">        <span class="keyword">final</span> <span class="type">long</span> <span class="variable">dueTime</span> <span class="operator">=</span> now + delayMillis;</span><br><span class="line">        <span class="comment">//1、存储当前任务到队列中key =&gt; callback</span></span><br><span class="line">        <span class="comment">//外层传入的mTraversalRunnable，就会存储在这</span></span><br><span class="line">        mCallbackQueues[callbackType].addCallbackLocked(dueTime, action, token);</span><br><span class="line">        <span class="comment">//2、这里传进来是0，所以直接执行；</span></span><br><span class="line">        <span class="keyword">if</span> (dueTime &lt;= now) &#123;</span><br><span class="line">            scheduleFrameLocked(now);</span><br><span class="line">        &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">            <span class="comment">//否则会通过handler发送定时任务；</span></span><br><span class="line">            <span class="type">Message</span> <span class="variable">msg</span> <span class="operator">=</span> mHandler.obtainMessage(MSG_DO_SCHEDULE_CALLBACK, action);</span><br><span class="line">            msg.arg1 = callbackType;</span><br><span class="line">            msg.setAsynchronous(<span class="literal">true</span>);</span><br><span class="line">            mHandler.sendMessageAtTime(msg, dueTime);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h4 id="2、判断是否在主线程中；在主线程执行doScheduleVsync"><a href="#2、判断是否在主线程中；在主线程执行doScheduleVsync" class="headerlink" title="  2、判断是否在主线程中；在主线程执行doScheduleVsync();"></a><span id="jump3_3_2">  2、判断是否在主线程中；在主线程执行doScheduleVsync();</h4><ul>
+<li>若不在主线中，先发送MSG_DO_SCHEDULE_VSYNC 同步消息；</li>
+<li>将主线切换到主线程执行doScheduleVsync();<ul>
+<li>doScheduleCallback<ul>
+<li>scheduleVsyncLocked()<ul>
+<li>mDisplayEventReceiver.scheduleVsync();</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br></pre></td><td class="code"><pre><span class="line">#Choreographer.java</span><br><span class="line"><span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">scheduleFrameLocked</span><span class="params">(<span class="type">long</span> now)</span> &#123;</span><br><span class="line">    <span class="comment">//判断是否在主线程</span></span><br><span class="line">    <span class="keyword">if</span> (isRunningOnLooperThreadLocked()) &#123;</span><br><span class="line">        scheduleVsyncLocked();</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        <span class="comment">//不在主线程，通过Handler发回主线程执行；</span></span><br><span class="line">        <span class="type">Message</span> <span class="variable">msg</span> <span class="operator">=</span> mHandler.obtainMessage(MSG_DO_SCHEDULE_VSYNC);</span><br><span class="line">        msg.setAsynchronous(<span class="literal">true</span>);</span><br><span class="line">        mHandler.sendMessageAtFrontOfQueue(msg);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">private</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">FrameHandler</span> <span class="keyword">extends</span> <span class="title class_">Handler</span> &#123;</span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">handleMessage</span><span class="params">(Message msg)</span> &#123;</span><br><span class="line">        <span class="keyword">switch</span> (msg.what) &#123;</span><br><span class="line">            ...</span><br><span class="line">            <span class="keyword">case</span> MSG_DO_SCHEDULE_CALLBACK:</span><br><span class="line">                <span class="comment">//只是发回主线程执行任务；</span></span><br><span class="line">                <span class="comment">//又回调用scheduleFrameLocked()方法；</span></span><br><span class="line">                doScheduleCallback(msg.arg1);</span><br><span class="line">                <span class="keyword">break</span>;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">void</span> <span class="title function_">doScheduleCallback</span><span class="params">(<span class="type">int</span> callbackType)</span> &#123;</span><br><span class="line">    scheduleFrameLocked(now);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h4 id="3、mDisplayEventReceiver-scheduleVsync-注册FrameDisplayEventReceiver到c层"><a href="#3、mDisplayEventReceiver-scheduleVsync-注册FrameDisplayEventReceiver到c层" class="headerlink" title="  3、mDisplayEventReceiver.scheduleVsync(); 注册FrameDisplayEventReceiver到c层"></a><span id="jump3_3_3">  3、mDisplayEventReceiver.scheduleVsync(); 注册FrameDisplayEventReceiver到c层</h4><p>注册FrameDisplayEventReceiver接受者到c层，用于接收下一次的VSYNC垂直信号；</p>
+<ul>
+<li>每16ms会回调一次Receiver的#onVsync()方法；</li>
+<li>可通过hook此刻，记录startTime；用于记录卡顿情况</li>
+</ul>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">#Choreographer.java</span><br><span class="line"><span class="keyword">private</span> <span class="keyword">final</span> FrameDisplayEventReceiver mDisplayEventReceiver;</span><br><span class="line"><span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">scheduleVsyncLocked</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="comment">//通过FrameDisplayEventReceiver，注册监听c层mFling的Vsync垂直信号；</span></span><br><span class="line">    <span class="comment">//调用此方法后，在receiver中就能收到onVsync()回调了</span></span><br><span class="line">    mDisplayEventReceiver.scheduleVsync();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">#DisplayEventReceiver.java</span><br><span class="line"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">scheduleVsync</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="comment">//调用c层代码；注册receiver到mFling中</span></span><br><span class="line">    nativeScheduleVsync(mReceiverPtr);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h4 id="4、onVsync-通过Handler发回主线程-执行doFrame"><a href="#4、onVsync-通过Handler发回主线程-执行doFrame" class="headerlink" title=" 4、onVsync() 通过Handler发回主线程 &#x3D;&gt; 执行doFrame()"></a><span id="jump3_3_4"> 4、onVsync() 通过Handler发回主线程 &#x3D;&gt; 执行doFrame()</h4><ul>
+<li>在doFrame()中会依次执行任务<ul>
+<li>CALLBACK_INPUT类型：输入源</li>
+<li>CALLBACK_ANIMATION：动画</li>
+<li>CALLBACK_INSETS_ANIMATION：</li>
+<li>CALLBACK_TRAVERSAL：绘制，此时会执行传入的TraversalRunnable任务；也就回调到doTraversal()了；</li>
+<li>CALLBACK_COMMIT：结束绘制<ul>
+<li>可通过hook此处，记录endTime；用于计算丢帧数：(endTime - startTime) &#x2F; 16ms</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br></pre></td><td class="code"><pre><span class="line">#Choreographer.java</span><br><span class="line"><span class="keyword">private</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">FrameDisplayEventReceiver</span> <span class="keyword">extends</span> <span class="title class_">DisplayEventReceiver</span></span><br><span class="line">        <span class="keyword">implements</span> <span class="title class_">Runnable</span> &#123;</span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">onVsync</span><span class="params">(<span class="type">long</span> timestampNanos, <span class="type">long</span> physicalDisplayId, <span class="type">int</span> frame,</span></span><br><span class="line"><span class="params">                        VsyncEventData vsyncEventData)</span> &#123;</span><br><span class="line">        <span class="comment">//1、由于onVsync()方法回调是在子线程的；所以先发回主线程执行；</span></span><br><span class="line">        <span class="comment">// 注意当前Receiver是继承了Runnable了，</span></span><br><span class="line">        <span class="comment">// 所以此刻的this是将Runnable设置给handler，然后在Looper循环时会自动执行Runnable的；即下方的run()方法；</span></span><br><span class="line">        <span class="type">Message</span> <span class="variable">msg</span> <span class="operator">=</span> Message.obtain(mHandler, <span class="built_in">this</span>);</span><br><span class="line">        msg.setAsynchronous(<span class="literal">true</span>);</span><br><span class="line">        mHandler.sendMessageAtTime(msg, timestampNanos / TimeUtils.NANOS_PER_MS);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">run</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="comment">//2、在Looper中会自动调用run，执行到这</span></span><br><span class="line">        doFrame(mTimestampNanos, mFrame, mLastVsyncEventData);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">void</span> <span class="title function_">doFrame</span><span class="params">(<span class="type">long</span> frameTimeNanos, <span class="type">int</span> frame, DisplayEventReceiver.VsyncEventData vsyncEventData)</span> &#123;</span><br><span class="line">    <span class="comment">//1、执行输入源任务</span></span><br><span class="line">    doCallbacks(Choreographer.CALLBACK_INPUT, frameData, frameIntervalNanos);</span><br><span class="line">    <span class="comment">//2、执行动画任务</span></span><br><span class="line">    doCallbacks(Choreographer.CALLBACK_ANIMATION, frameData, frameIntervalNanos);</span><br><span class="line">    doCallbacks(Choreographer.CALLBACK_INSETS_ANIMATION, frameData, frameIntervalNanos);</span><br><span class="line">    <span class="comment">//3、执行绘制任务</span></span><br><span class="line">    doCallbacks(Choreographer.CALLBACK_TRAVERSAL, frameData, frameIntervalNanos);</span><br><span class="line">    <span class="comment">//4、执行Commit任务</span></span><br><span class="line">    doCallbacks(Choreographer.CALLBACK_COMMIT, frameData, frameIntervalNanos);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="（4）RenderThread渲染"><a href="#（4）RenderThread渲染" class="headerlink" title=" （4）RenderThread渲染"></a><span id="jump3_4"> （4）RenderThread渲染</h3><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_11.jpg" alt="image.png"></p>
+<p>截止到目前，在ViewRootImpl中完成了对界面的measure、layout和draw等绘制流程后，用户依然还是看不到屏幕上显示的应用界面内容。</p>
+<p>因为整个Android系统的显示流程除了前面讲到的UI线程的绘制外，</p>
+<ul>
+<li>1、界面还需要经过RenderThread线程的渲染处理，</li>
+<li>2、渲染完成后，还需要通过Binder调用“上帧”交给surfaceflinger进程中进行合成后送显才能最终显示到屏幕上。</li>
+</ul>
+<blockquote>
+<p>也就是RenderThread线程会将view创建成RenderNode节点，最后合成bitmap对象设置给mSurface上，而mSurface就是通过WMS从SurfaceFlinger申请的内存空间画布；</p>
+<p>RenderThread合成后写入mSurface中，SurfaceFlinger在另一个进程也会监听VSYNC信号，然后通过BufferQueue轮询获取mSurface对象，如果mSurface需要刷新，就在SurfaceFlinger中将数据合成帧，最后写入&#x2F;dev&#x2F;device硬件显示的内存空间中，也就展示到硬件屏幕上了；</p>
+<p>所以在App进程接受VSYNC信号，会合成view节点刷入mSurface中；SurfaceFlinger也会监听VSYNC信号，处理mSurface数据合成帧；但他们都是独立进行的，所以可能会app在这次的VSYNC信号刷入了mSurface中，但是要等到下次SurfaceFlinger收到VSYNC信号时才会更新；因为他们是通过BufferQueue加锁处理的；</p>
+</blockquote>
+<p>本小节中，我们将接上一节中ViewRootImpl中最后draw的流程继续往下分析开启硬件加速情况下，RenderThread渲染线程的工作流程。由于目前Android 4.X之后系统默认界面是开启硬件加速的，所以本文我们重点分析硬件加速条件下的界面渲染流程，我们先分析一下简化的代码流程：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">/*frameworks/base/core/java/android/view/ViewRootImpl.java API 30*/</span></span><br><span class="line"><span class="keyword">private</span> <span class="type">boolean</span> <span class="title function_">draw</span><span class="params">(<span class="type">boolean</span> fullRedrawNeeded)</span> &#123;</span><br><span class="line">    ...</span><br><span class="line">    <span class="comment">//mSurface已经设置给RenderThread后，直接走draw()</span></span><br><span class="line">    <span class="keyword">if</span> (mAttachInfo.mThreadedRenderer != <span class="literal">null</span> &amp;&amp; mAttachInfo.mThreadedRenderer.isEnabled()) &#123;</span><br><span class="line">        ...</span><br><span class="line">        <span class="comment">// 硬件加速条件下的界面渲染流程</span></span><br><span class="line">        mAttachInfo.mThreadedRenderer.draw(mView, mAttachInfo, <span class="built_in">this</span>);</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        ...</span><br><span class="line">        <span class="comment">//首次进来，会先将mSurface对象关联给RenderThread</span></span><br><span class="line">        mAttachInfo.mThreadedRenderer.initializeIfNeeded(</span><br><span class="line">                                mWidth, mHeight, mAttachInfo, mSurface, surfaceInsets);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">/*frameworks/base/core/java/android/view/ThreadedRenderer.java API 30*/</span></span><br><span class="line"><span class="keyword">void</span> <span class="title function_">draw</span><span class="params">(View view, AttachInfo attachInfo, DrawCallbacks callbacks)</span> &#123;</span><br><span class="line">    ...</span><br><span class="line">    <span class="comment">// 1.从DecorView根节点出发，递归遍历View控件树，记录每个View节点的绘制操作命令，完成绘制操作命令树的构建</span></span><br><span class="line">    updateRootDisplayList(view, callbacks);</span><br><span class="line">    ...</span><br><span class="line">    <span class="comment">// 2.JNI调用同步Java层构建的绘制命令树到Native层的RenderThread渲染线程，并唤醒渲染线程利用OpenGL执行渲染任务；</span></span><br><span class="line">    <span class="type">int</span> <span class="variable">syncResult</span> <span class="operator">=</span> syncAndDrawFrame(choreographer.mFrameInfo);</span><br><span class="line">    ...</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>从上面的代码可以看出，硬件加速绘制主要包括两个阶段：</p>
+<ul>
+<li>（1）initialzeIfNeeded() 关联mSurface；在后续的渲染过程中，<code>CanvasContext</code>会通过<code>mNativeSurface</code>来访问这个Surface对象，从而将OpenGL ES的绘制结果显示到Surface上。</li>
+<li>（2）draw()绘制流程<ul>
+<li>1、从DecorView根节点出发，递归遍历View控件树，记录每个View节点的drawOp绘制操作命令，完成绘制操作命令树的构建；</li>
+<li>2、JNI调用同步Java层构建的绘制命令树到Native层的RenderThread渲染线程，并唤醒渲染线程利用OpenGL执行渲染任务；</li>
+</ul>
+</li>
+</ul>
+<h3 id="0、initialzeIfNeeded-关联mSurface；"><a href="#0、initialzeIfNeeded-关联mSurface；" class="headerlink" title=" 0、initialzeIfNeeded() 关联mSurface；"></a><span id="jump3_4_0"> 0、initialzeIfNeeded() 关联mSurface；</h3><p>省略java层调用，最终会调用到JNI方法，直接看cpp层</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta">#xref: /frameworks/base/libs/hwui/jni/android_graphics_HardwareRenderer.cpp API 30</span></span><br><span class="line"><span class="function"><span class="type">static</span> <span class="type">void</span> <span class="title">android_view_ThreadedRenderer_setSurface</span><span class="params">(JNIEnv* env, jobject clazz,jlong proxyPtr, jobject jsurface, jboolean discardBuffer)</span> </span>&#123;</span><br><span class="line">    <span class="comment">//解析mSurface对象</span></span><br><span class="line">    <span class="keyword">if</span> (jsurface) &#123;</span><br><span class="line">      window = <span class="built_in">fromSurface</span>(env, jsurface);</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="comment">//设置Surface</span></span><br><span class="line">    proxy-&gt;<span class="built_in">setSurface</span>(window, enableTimeout);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="meta"># frameworks/base/libs/hwui/renderthread/RenderProxy.cpp</span></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">RenderProxy::setSurface</span><span class="params">(ANativeWindow* window, <span class="type">bool</span> enableTimeout)</span> </span>&#123;</span><br><span class="line">    ...</span><br><span class="line">    mContext-&gt;<span class="built_in">setSurface</span>(win, enableTimeout);</span><br><span class="line">&#125;</span><br><span class="line">这个mContext是谁呢？这个根据渲染工具有所区分，我们来看Skia的流程；</span><br><span class="line">mContext = mRenderThread.<span class="built_in">queue</span>().<span class="built_in">runSync</span>([&amp;]() -&gt; CanvasContext* &#123;</span><br><span class="line">    <span class="keyword">return</span> CanvasContext::<span class="built_in">create</span>(mRenderThread, translucent, rootRenderNode, contextFactory);</span><br><span class="line">&#125;);</span><br><span class="line"></span><br><span class="line"><span class="meta"># xref: /frameworks/base/libs/hwui/renderthread/CanvasContext.cpp</span></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">CanvasContext::setSurface</span><span class="params">(ANativeWindow* window, <span class="type">bool</span> enableTimeout)</span> </span>&#123;</span><br><span class="line">    <span class="comment">//将surface关联上，</span></span><br><span class="line">    <span class="comment">//在后续的渲染过程中，`CanvasContext`会通过`mNativeSurface`来访问这个`ANativeWindow* window`对象，从而将OpenGL ES的绘制结果显示到Surface上。</span></span><br><span class="line">    mNativeSurface = std::<span class="built_in">make_unique</span>&lt;ReliableSurface&gt;(window);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="1、构建绘制命令树-updateRootDisplayList"><a href="#1、构建绘制命令树-updateRootDisplayList" class="headerlink" title=" 1、构建绘制命令树 updateRootDisplayList"></a><span id="jump3_4_1"> 1、构建绘制命令树 updateRootDisplayList</h3><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">/*frameworks/base/core/java/android/view/ThreadedRenderer.java*/</span></span><br><span class="line"><span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">updateRootDisplayList</span><span class="params">(View view, DrawCallbacks callbacks)</span> &#123;</span><br><span class="line">    <span class="comment">// 1、递归子View的updateDisplayListIfDirty实现构建DisplayListOp</span></span><br><span class="line">    updateViewTreeDisplayList(view);</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 2、获取根View的SkiaRecordingCanvas</span></span><br><span class="line">    <span class="type">RecordingCanvas</span> <span class="variable">canvas</span> <span class="operator">=</span> mRootNode.beginRecording(mSurfaceWidth, mSurfaceHeight);</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 3、利用canvas缓存DisplayListOp绘制命令</span></span><br><span class="line">    canvas.drawRenderNode(view.updateDisplayListIfDirty());</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 4、将所有DisplayListOp绘制命令填充到RootRenderNode中</span></span><br><span class="line">    mRootNode.endRecording();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">updateViewTreeDisplayList</span><span class="params">(View view)</span> &#123;</span><br><span class="line">    <span class="comment">// 从DecorView根节点出发，开始递归调用每个View树节点的updateDisplayListIfDirty函数</span></span><br><span class="line">    view.updateDisplayListIfDirty();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">/*frameworks/base/core/java/android/view/View.java*/</span></span><br><span class="line"><span class="keyword">public</span> RenderNode <span class="title function_">updateDisplayListIfDirty</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="comment">// 1.利用`View`对象构造时创建的`RenderNode`获取一个`SkiaRecordingCanvas`“画布”；</span></span><br><span class="line">    <span class="keyword">final</span> <span class="type">RecordingCanvas</span> <span class="variable">canvas</span> <span class="operator">=</span> renderNode.beginRecording(width, height);</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 如果仅仅是ViewGroup，并且自身不用绘制，直接递归子View</span></span><br><span class="line">    dispatchDraw(canvas);</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 2.利用SkiaRecordingCanvas，在每个子View控件的onDraw绘制函数中调用drawLine、drawRect等绘制操作时，创建对应的DisplayListOp绘制命令，并缓存记录到其内部的SkiaDisplayList持有的DisplayListData中；</span></span><br><span class="line">    draw(canvas);</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 3.将包含有`DisplayListOp`绘制命令缓存的`SkiaDisplayList`对象设置填充到`RenderNode`中；</span></span><br><span class="line">    renderNode.endRecording();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">draw</span><span class="params">(Canvas canvas)</span> &#123;</span><br><span class="line">    <span class="comment">// draw the content(View自己实现的onDraw绘制，由应用开发者自己实现)</span></span><br><span class="line">    onDraw(canvas);</span><br><span class="line">    <span class="comment">// draw the children</span></span><br><span class="line">    dispatchDraw(canvas);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">/*frameworks/base/graphics/java/android/graphics/RenderNode.java*/</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">endRecording</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="comment">//将包含有`DisplayListOp`绘制命令缓存的`SkiaDisplayList`对象设置填充到`RenderNode`中；</span></span><br><span class="line"></span><br><span class="line">    <span class="comment">// 从SkiaRecordingCanvas中获取SkiaDisplayList对象</span></span><br><span class="line">    <span class="type">long</span> <span class="variable">displayList</span> <span class="operator">=</span> canvas.finishRecording();</span><br><span class="line">    <span class="comment">// 将SkiaDisplayList对象填充到RenderNode中</span></span><br><span class="line">    nSetDisplayList(mNativeRenderNode, displayList);</span><br><span class="line">    canvas.recycle();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>构建绘制命令树的过程是从View控件树的根节点DecorView触发，递归调用每个子View节点的updateDisplayListIfDirty函数，最终完成绘制树的创建，简述流程如下：</p>
+<ul>
+<li>（1）利用View对象构造时创建的RenderNode获取一个SkiaRecordingCanvas“画布”；</li>
+<li>（2）利用SkiaRecordingCanvas，在每个子View控件的onDraw绘制函数中调用drawLine、drawRect等绘制操作时，创建对应的DisplayListOp绘制命令，并缓存记录到其内部的SkiaDisplayList持有的DisplayListData中；</li>
+<li>（3）将包含有DisplayListOp绘制命令缓存的SkiaDisplayList对象设置填充到RenderNode中；</li>
+<li>（4）最后将根View的缓存DisplayListOp设置到RootRenderNode中，完成构建。</li>
+</ul>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_16.jpg" alt="image.png"></p>
+<p>整体renderNode结构如下：<br><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_17.jpg" alt="image.png"></p>
+<h3 id="2、执行渲染绘制任务-syncAndDrawFrame"><a href="#2、执行渲染绘制任务-syncAndDrawFrame" class="headerlink" title=" 2、执行渲染绘制任务 syncAndDrawFrame"></a><span id="jump3_4_2"> 2、执行渲染绘制任务 syncAndDrawFrame</h3><p>上边已经将Decorview开始的所有view构建成了；RenderNode树结构了；<br>接下来就开始绘制过程：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">/*frameworks/base/graphics/java/android/graphics/HardwareRenderer.java*/</span></span><br><span class="line"><span class="keyword">public</span> <span class="type">int</span> <span class="title function_">syncAndDrawFrame</span><span class="params">(<span class="meta">@NonNull</span> FrameInfo frameInfo)</span> &#123;</span><br><span class="line">    <span class="comment">// JNI调用native层的相关函数</span></span><br><span class="line">    <span class="keyword">return</span> nSyncAndDrawFrame(mNativeProxy, frameInfo.frameInfo, frameInfo.frameInfo.length);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">/*frameworks/base/libs/hwui/jni/android_graphics_HardwareRenderer.cpp API 30*/</span></span><br><span class="line"><span class="keyword">static</span> <span class="type">int</span> <span class="title function_">android_view_ThreadedRenderer_syncAndDrawFrame</span><span class="params">(JNIEnv* env, jobject clazz,</span></span><br><span class="line"><span class="params">                                                          jlong proxyPtr, jlongArray frameInfo, jint frameInfoSize)</span> &#123;</span><br><span class="line">    RenderProxy* proxy = reinterpret_cast&lt;RenderProxy*&gt;(proxyPtr);</span><br><span class="line">    env-&gt;GetLongArrayRegion(frameInfo, <span class="number">0</span>, frameInfoSize, proxy-&gt;frameInfo());</span><br><span class="line">    <span class="keyword">return</span> proxy-&gt;syncAndDrawFrame();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">/*frameworks/base/libs/hwui/renderthread/RenderProxy.cpp*/</span></span><br><span class="line"><span class="type">int</span> RenderProxy::syncAndDrawFrame() &#123;</span><br><span class="line">    <span class="comment">// 唤醒RenderThread渲染线程，执行DrawFrame绘制任务</span></span><br><span class="line">    <span class="keyword">return</span> mDrawFrameTask.drawFrame();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">/*frameworks/base/libs/hwui/renderthread/DrawFrameTask.cpp*/</span></span><br><span class="line"><span class="type">int</span> DrawFrameTask::drawFrame() &#123;</span><br><span class="line">    postAndWait();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">void</span> DrawFrameTask::postAndWait() &#123;</span><br><span class="line">    <span class="comment">// 向RenderThread渲染线程的MessageQueue消息队列放入一个待执行任务，以将其唤醒执行run函数</span></span><br><span class="line">    mRenderThread-&gt;queue().post([<span class="built_in">this</span>]() &#123; run(); &#125;);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">void</span> DrawFrameTask::run() &#123;</span><br><span class="line">    <span class="comment">//1.将UI线程构建的DisplayListOp绘制命令树同步到RenderThread渲染线程</span></span><br><span class="line">    canUnblockUiThread = syncFrameState(info);</span><br><span class="line">   </span><br><span class="line">    <span class="comment">// 2.执行draw渲染绘制动作</span></span><br><span class="line">    context-&gt;draw();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">bool DrawFrameTask::syncFrameState(TreeInfo&amp; info) &#123;</span><br><span class="line">    ATRACE_CALL();</span><br><span class="line">    <span class="comment">// 调用CanvasContext的prepareTree函数实现绘制命令树同步的流程</span></span><br><span class="line">    mContext-&gt;prepareTree(info, mFrameInfo, mSyncQueued, mTargetNode);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">/*frameworks/base/libs/hwui/renderthread/CanvasContext.cpp*/</span></span><br><span class="line"><span class="keyword">void</span> CanvasContext::prepareTree(TreeInfo&amp; info, int64_t* uiFrameInfo, int64_t syncQueued,</span><br><span class="line">                                RenderNode* target) &#123;</span><br><span class="line">    <span class="keyword">for</span> (const sp&lt;RenderNode&gt;&amp; node : mRenderNodes) &#123;</span><br><span class="line">        <span class="comment">// 递归调用各个子View对应的RenderNode执行prepareTree动作</span></span><br><span class="line">        node-&gt;prepareTree(info);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">/*frameworks/base/libs/hwui/RenderNode.cpp*/</span></span><br><span class="line"><span class="keyword">void</span> RenderNode::prepareTree(TreeInfo&amp; info) &#123;</span><br><span class="line">    prepareTreeImpl(observer, info, <span class="literal">false</span>);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">void</span> RenderNode::prepareTreeImpl(TreeObserver&amp; observer, TreeInfo&amp; info, bool functorsNeedLayer) &#123;</span><br><span class="line">    <span class="comment">// 同步绘制命令树</span></span><br><span class="line">    pushStagingDisplayListChanges(observer, info);</span><br><span class="line">    </span><br><span class="line">    <span class="comment">// 遍历调用各个子View对应的RenderNode的prepareTreeImpl</span></span><br><span class="line">    <span class="type">bool</span> <span class="variable">isDirty</span> <span class="operator">=</span> mDisplayList-&gt;prepareListAndChildren(</span><br><span class="line">            observer, info, childFunctorsNeedLayer,</span><br><span class="line">            [](RenderNode* child, TreeObserver&amp; observer, TreeInfo&amp; info,</span><br><span class="line">            bool functorsNeedLayer) &#123;</span><br><span class="line">        child-&gt;prepareTreeImpl(observer, info, functorsNeedLayer);</span><br><span class="line">    &#125;);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">void</span> RenderNode::pushStagingDisplayListChanges(TreeObserver&amp; observer, TreeInfo&amp; info) &#123;</span><br><span class="line">    syncDisplayList(observer, &amp;info);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">void</span> RenderNode::syncDisplayList(TreeObserver&amp; observer, TreeInfo* info) &#123;</span><br><span class="line">    <span class="comment">// 完成赋值同步DisplayList对象</span></span><br><span class="line">    mDisplayList = mStagingDisplayList;</span><br><span class="line">    mStagingDisplayList = nullptr;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">void</span> CanvasContext::draw() &#123;</span><br><span class="line">    <span class="comment">// 1.调用OpenGL库使用GPU，按照构建好的绘制命令完成界面的渲染</span></span><br><span class="line">    <span class="type">bool</span> <span class="variable">drew</span> <span class="operator">=</span> mRenderPipeline-&gt;draw(frame, windowDirty, dirty, mLightGeometry, &amp;mLayerUpdateQueue,</span><br><span class="line">            mContentDrawBounds, mOpaque, mLightInfo, mRenderNodes,</span><br><span class="line">                                  &amp;(profiler()));</span><br><span class="line">    <span class="comment">// 2.将前面已经绘制渲染好的图形缓冲区Binder上帧给SurfaceFlinger合成和显示</span></span><br><span class="line">    <span class="type">bool</span> <span class="variable">didSwap</span> <span class="operator">=</span></span><br><span class="line">            mRenderPipeline-&gt;swapBuffers(frame, drew, windowDirty, mCurrentFrameInfo, &amp;requireSwap);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>UI线程利用RenderProxy向RenderThread线程发送一个DrawFrameTask任务请求，RenderThread被唤醒，开始渲染，大致流程如下：</p>
+<ul>
+<li>（1）syncFrameState中遍历View树上每一个RenderNode，执行prepareTreeImpl函数，实现同步绘制命令树的操作；</li>
+<li>（2）调用OpenGL库API使用GPU，按照构建好的绘制命令完成界面的渲染（具体过程，由于本文篇幅所限，暂不展开分析）；</li>
+<li>（3）将前面已经绘制渲染好的图形缓冲区Binder上帧给SurfaceFlinger合成和显示；</li>
+</ul>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_18.jpg" alt="image.png"></p>
+<h3 id="（5）SurfaceFlinger合成显示"><a href="#（5）SurfaceFlinger合成显示" class="headerlink" title=" （5）SurfaceFlinger合成显示"></a><span id="jump3_5"> （5）SurfaceFlinger合成显示</h3><p>上边RenderThread最终调用到SurfaceFlinger上了，继续看；</p>
+<p>SurfaceFlinger是又一个复杂系统了，后续后机会再看吧；</p>
+<blockquote>
+<p>简单来说：</p>
+<p>它的职责就是负责接受来自多个来源的数据缓冲区，对它们进行合成，然后发送到显示设备。如下图所示：</p>
+</blockquote>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_19.jpg" alt="image.png"></p>
+<p>从上图可以看出，其实SurfaceFlinger在Android系统的整个图形显示系统中是起到一个承上启下的作用：</p>
+<ul>
+<li>对上：通过Surface与不同的应用进程建立联系，接收它们写入Surface中的绘制缓冲数据，对它们进行统一合成。</li>
+<li>对下：通过屏幕的后缓存区与屏幕建立联系，发送合成好的数据到屏幕显示设备。</li>
+</ul>
+<p>图形的传递是通过Buffer作为载体，Surface是对Buffer的进一步封装，也就是说Surface内部具有多个Buffer供上层使用，如何管理这些Buffer呢？答案就是BufferQueue ，下面我们来看看BufferQueue的工作原理：</p>
+<h3 id="1、BufferQueue机制"><a href="#1、BufferQueue机制" class="headerlink" title=" 1、BufferQueue机制"></a><span id="jump3_5_1"> 1、BufferQueue机制</h3><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_20.jpg" alt="image.png"></p>
+<p>BufferQueue是一个典型的生产者-消费者模型中的数据结构。在Android应用的渲染流程中，应用扮演的就是“生产者”的角色，而SurfaceFlinger扮演的则是“消费者”的角色，其配合工作的流程如下：</p>
+<ul>
+<li>（1）应用进程中在开始界面的绘制渲染之前，需要通过Binder调用dequeueBuffer接口从SurfaceFlinger进程中管理的BufferQueue 中申请一张处于free状态的可用Buffer，如果此时没有可用Buffer则阻塞等待；</li>
+<li>（2）应用进程中拿到这张可用的Buffer之后，选择使用CPU软件绘制渲染或GPU硬件加速绘制渲染，渲染完成后再通过Binder调用queueBuffer接口将缓存数据返回给应用进程对应的BufferQueue（如果是 GPU 渲染的话，这里还有个 GPU处理的过程，所以这个 Buffer 不会马上可用，需要等 GPU 渲染完成的Fence信号），并申请sf类型的Vsync以便唤醒“消费者”SurfaceFlinger进行消费；</li>
+<li>（3）SurfaceFlinger 在收到 Vsync 信号之后，开始准备合成，使用 acquireBuffer获取应用对应的 BufferQueue 中的 Buffer 并进行合成操作；</li>
+<li>（4）合成结束后，SurfaceFlinger 将通过调用 releaseBuffer将 Buffer 置为可用的free状态，返回到应用对应的 BufferQueue中。</li>
+</ul>
+<h3 id="2、sync同步机制"><a href="#2、sync同步机制" class="headerlink" title=" 2、sync同步机制"></a><span id="jump3_5_2"> 2、sync同步机制</h3><p>Vysnc垂直同步是Android在“黄油计划”中引入的一个重要机制，本质上是为了协调BufferQueue的应用生产者生成UI数据动作和SurfaceFlinger消费者的合成消费动作，避免出现画面撕裂的Tearing现象。Vysnc信号分为两种类型：</p>
+<ul>
+<li>（1）app类型的Vsync：<ul>
+<li>app类型的Vysnc信号由上层应用中的Choreographer根据绘制需求进行注册和接收，用于控制应用UI绘制上帧的生产节奏。根据【（3）Choregrapher 回调TraversalRunnable任务过程】的分析：应用在UI线程中调用invalidate刷新界面绘制时，需要先透过Choreographer向系统申请注册app类型的Vsync信号，待Vsync信号到来后，才能往主线程的消息队列放入待绘制任务进行真正UI的绘制动作；</li>
+</ul>
+</li>
+<li>（2）sf类型的Vsync:<ul>
+<li>sf类型的Vsync是用于控制SurfaceFlinger的合成消费节奏。应用完成界面的绘制渲染后，通过Binder调用queueBuffer接口将缓存数据返还给应用对应的BufferQueue时，会申请sf类型的Vsync，待SurfaceFlinger 在其UI线程中收到 Vsync 信号之后，便开始进行界面的合成操作。</li>
+</ul>
+</li>
+</ul>
+<p>Vsync信号的生成是参考屏幕硬件的刷新周期的，其架构如下图所示：</p>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_21.jpg" alt="image.png"></p>
+<h2 id="四、检测丢帧方案"><a href="#四、检测丢帧方案" class="headerlink" title=" 四、检测丢帧方案"></a><span id="jump4"> 四、检测丢帧方案</h2><h3 id="（1）开源组件Tiny-Dance"><a href="#（1）开源组件Tiny-Dance" class="headerlink" title=" （1）开源组件Tiny Dance"></a><span id="jump4_3"> （1）开源组件Tiny Dance</h3><p><a target="_blank" rel="noopener" href="https://github.com/friendlyrobotnyc/TinyDancer">https://github.com/friendlyrobotnyc/TinyDancer</a><br>例如，你可以写一个自定义的FPSFrameCallback继承自Choreographer.FrameCallback，实现里面的doFrame方法。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="keyword">class</span> <span class="title class_">FPSFrameCallback</span> <span class="keyword">implements</span> <span class="title class_">Choreographer</span>.FrameCallback&#123;</span><br><span class="line"><span class="meta">@Override</span></span><br><span class="line">  <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">doFrame</span><span class="params">(<span class="type">long</span> frameTimeNanos)</span>&#123;</span><br><span class="line">      <span class="comment">//do something</span></span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"><span class="comment">//通过</span></span><br><span class="line">Choreographer.getInstance().postFrameCallback(<span class="keyword">new</span> <span class="title class_">FPSFrameCallback</span>());</span><br></pre></td></tr></table></figure>
+
+<p>把你的回调添加到Choreographer之中，那么在下一个frame被渲染的时候就会回调你的callback,执行你定义的doFrame操作，这时候你就可以获取到这一帧的开始渲染时间并做一些自己想做的事情了。<br>开源组件Tiny Dancer就是根据这个原理获取每一帧的渲染时间，继而分析实现获取设备的当前帧率的。有兴趣的人可以查看。</p>
+<p><a target="_blank" rel="noopener" href="https://blog.csdn.net/feelabclihu/article/details/112690868">https://blog.csdn.net/feelabclihu/article/details/112690868</a></p>
+<h3 id="（2）可以通过Hook来检测卡顿"><a href="#（2）可以通过Hook来检测卡顿" class="headerlink" title="  （2）可以通过Hook来检测卡顿"></a><span id="jump4_1">  （2）可以通过Hook来检测卡顿</h3><p>1、方法一</p>
+<ul>
+<li>scheduleVsync() 记录startTime</li>
+<li>doFrame() 记录endTime</li>
+<li>计算丢帧数：(endTime - startTime) &#x2F; 16ms</li>
+</ul>
+<p>2、方法二</p>
+<ul>
+<li><p>Hook Choreography的SKIPPED_FRAME_WARNING_LIMIT &#x3D; 30的参数，改成1</p>
+<ul>
+<li>在doCallBack(Commit)时，默认会通过这个值计算，改成1后就超过16ms就会打印</li>
+</ul>
+<p>The application maybe doing too much work on its runnable Thread</p>
+</li>
+</ul>
+<h3 id="（3）利用FrameInfo监控，gfxifo-google提供的"><a href="#（3）利用FrameInfo监控，gfxifo-google提供的" class="headerlink" title="  （3）利用FrameInfo监控，gfxifo google提供的"></a><span id="jump4_2">  （3）利用FrameInfo监控，gfxifo google提供的</h3><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">adb shell dumpsys gfxifo &#123;packagename&#125; from stats</span><br></pre></td></tr></table></figure>
+
+<h2 id="五、高频问题"><a href="#五、高频问题" class="headerlink" title="五、高频问题"></a><span id="jump5">五、高频问题</h2><h3 id="（1）每16ms会调用一次onDraw-方法吗？不是"><a href="#（1）每16ms会调用一次onDraw-方法吗？不是" class="headerlink" title="（1）每16ms会调用一次onDraw()方法吗？不是"></a><span id="jump5_1">（1）每16ms会调用一次onDraw()方法吗？不是</h3><p>并不一定会执行onDraw()绘制流程；<br>需要看在这个16ms内，有没有调用requestLayout()方法；</p>
+<h3 id="（2）invilidate-方法会立刻刷新吗？不会"><a href="#（2）invilidate-方法会立刻刷新吗？不会" class="headerlink" title="（2）invilidate()方法会立刻刷新吗？不会"></a><span id="jump5_2">（2）invilidate()方法会立刻刷新吗？不会</h3><p>不会，它需要等到下次VSYNC垂直信号到来的时候，才会执行；</p>
+<h3 id="（3）丢帧是因为这个吗？"><a href="#（3）丢帧是因为这个吗？" class="headerlink" title="（3）丢帧是因为这个吗？"></a><span id="jump5_3">（3）丢帧是因为这个吗？</h3><p>是的，requestLayout()会通过mChoreography.post(CALL_TRAVELS)；<br>这里会记录状态，将任务放到了CallQueue中，</p>
+<ul>
+<li>choreography会再c层的mFiling种注册recevier，以接收vsync回调；</li>
+<li>onVsync()执行后，会执行queue中的任务；</li>
+<li>在commit任务时会计算：onVsync()信号开始到绘制完成的总时长；然后&#x2F;16ms 比较看丢了几帧数据；</li>
+</ul>
+<h3 id="（4）VSYNC信号是固定16ms？"><a href="#（4）VSYNC信号是固定16ms？" class="headerlink" title="（4）VSYNC信号是固定16ms？"></a><span id="jump5_4">（4）VSYNC信号是固定16ms？</h3><p>Vsync信号和屏幕刷新率相关；<br>60HZ的设备 &#x3D;&gt; 1s 内发送60次 VSYNC信号；也就是16ms；</p>
+<h3 id="（5）Activity启动后View何时开始绘制（onCreate中还是onResume之后？）"><a href="#（5）Activity启动后View何时开始绘制（onCreate中还是onResume之后？）" class="headerlink" title="（5）Activity启动后View何时开始绘制（onCreate中还是onResume之后？）"></a><span id="jump5_5">（5）Activity启动后View何时开始绘制（onCreate中还是onResume之后？）</h3><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_22.jpg" alt="image.png"></p>
+<p>上边已经描述很清楚了：onResume()之后；</p>
+<p>ActivityThread核心方法：</p>
+<ul>
+<li>handleLaunchActivity()<ul>
+<li>onAttach()创建window；通过Wms获取windowManager</li>
+<li>onCreate()创建Decorview，</li>
+</ul>
+</li>
+<li>handleResumeActivity()<ul>
+<li>onResume()生命周期</li>
+<li>创建ViewRootImpl；</li>
+<li>添加到mGlobal.add(decorview)；注册到WMS中管理</li>
+<li>ViewRootImpl.requestLayout()开启Choreography进行绘制；</li>
+</ul>
+</li>
+</ul>
+<h3 id="（6）子线程能不能更新ui？"><a href="#（6）子线程能不能更新ui？" class="headerlink" title="（6）子线程能不能更新ui？"></a><span id="jump5_6">（6）子线程能不能更新ui？</h3><h3 id="1、在RootViewImpl创建之前去更新是OK的，不会闪退；"><a href="#1、在RootViewImpl创建之前去更新是OK的，不会闪退；" class="headerlink" title="1、在RootViewImpl创建之前去更新是OK的，不会闪退；"></a>1、在RootViewImpl创建之前去更新是OK的，不会闪退；</h3><p>在imageView.setImageResource(id)时，会调用invalidate()方法；<br>执行时会循环判断parent是否创建了；最终会调用到ViewRootImpl是否创建；</p>
+<ul>
+<li>创建了：会调用root.requestLayout() 走checkTherad()判断线程</li>
+<li>没创建：不会调用root.requestLayout() 中；也就不会触发线程判断逻辑</li>
+<li>注意root.requestLayout()和view.requestLayout()方法名相同，但不是一个；</li>
+</ul>
+<p>那么为什么我们设置的resourceid还是能生效呢？</p>
+<ul>
+<li>因为虽然没有走到root.requsetLayout()去渲染UI，但是id已经设置给ImageView了，当root创建时会直接用到我们设置的id渲染；</li>
+</ul>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br></pre></td><td class="code"><pre><span class="line">ImageView#setImageResource </span><br><span class="line">  --&gt;  如果最新资源的宽度或者高度跟已有的不同，</span><br><span class="line">  	--&gt; View#requestLayout</span><br><span class="line">        --&gt; 满足条件，最终会调用 ViewRootImpl#requestLayout</span><br><span class="line">    --&gt;  View#invalidate </span><br><span class="line">		    --&gt;  View#invalidate(<span class="type">boolean</span>)</span><br><span class="line">      		--&gt;  View#invalidateInternal <span class="comment">//如果 </span></span><br><span class="line">      	    <span class="comment">//1、即正常ViewRootImpl已经创建的情况</span></span><br><span class="line">            <span class="keyword">if</span> mAttachInfo 以及 mParent 都不为空：</span><br><span class="line">                --&gt; ViewGroup#invalidateChild</span><br><span class="line">                <span class="comment">//这里会不断循环去取上一个结点的 mParent,一直到 mParent == null 也就是到达顶部 View 为止</span></span><br><span class="line">                        --&gt;  ViewRootImpl#invalidateChildInParent <span class="comment">// 注意 DecorView 的 mParent 是 ViewRootImpl</span></span><br><span class="line">                            --&gt;  ViewRootImpl#checkThread <span class="comment">//在这里执行 checkThread，如果当前线程不是创建 UI 的线程则抛出异常</span></span><br><span class="line">             <span class="keyword">else</span></span><br><span class="line">            <span class="comment">//2、ViewRootImpl没有创建的情况</span></span><br><span class="line">----------------------------------------------------------------------</span><br><span class="line">        <span class="comment">//View#invalidateInternal </span></span><br><span class="line">        </span><br><span class="line">        <span class="keyword">final</span> <span class="type">AttachInfo</span> <span class="variable">ai</span> <span class="operator">=</span> mAttachInfo;</span><br><span class="line">        <span class="keyword">final</span> <span class="type">ViewParent</span> <span class="variable">p</span> <span class="operator">=</span> mParent;</span><br><span class="line">        <span class="comment">//只有当 mAttachInfo 以及 mParent 都不为空时，才会触发重绘</span></span><br><span class="line">        <span class="keyword">if</span> (p != <span class="literal">null</span> &amp;&amp; ai != <span class="literal">null</span> &amp;&amp; l &lt; r &amp;&amp; t &lt; b) &#123;</span><br><span class="line">            <span class="comment">//....</span></span><br><span class="line">            p.invalidateChild(<span class="built_in">this</span>, damage);</span><br><span class="line">        &#125;   </span><br><span class="line">    </span><br></pre></td></tr></table></figure>
+
+<h3 id="2、SurfaceView-中支持子线程更新UI"><a href="#2、SurfaceView-中支持子线程更新UI" class="headerlink" title="2、SurfaceView 中支持子线程更新UI"></a>2、SurfaceView 中支持子线程更新UI</h3><h2 id="六、查看布局"><a href="#六、查看布局" class="headerlink" title="六、查看布局"></a><span id="jump6">六、查看布局</h2><p><a target="_blank" rel="noopener" href="https://developer.android.com/studio/debug/layout-inspector?hl=zh-cn">https://developer.android.com/studio/debug/layout-inspector?hl=zh-cn</a></p>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F_23.jpg" alt="image.png"></p>
+<ul>
+<li><p>Activity启动后View何时开始绘制（onCreate中还是onResume之后？）<br><a target="_blank" rel="noopener" href="https://www.jianshu.com/p/c5d200dde486">https://www.jianshu.com/p/c5d200dde486</a></p>
+</li>
+<li><p>[深入理解Android卷二 全文-第六章]深入理解ActivityManagerService<br><a target="_blank" rel="noopener" href="https://blog.csdn.net/Innost/article/details/47254381?spm=1001.2014.3001.5502">https://blog.csdn.net/Innost/article/details/47254381?spm=1001.2014.3001.5502</a></p>
+</li>
+</ul>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a href="https://irving18.github.io">王征</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://irving18.github.io/2024/07/10/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&amp;%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F/">https://irving18.github.io/2024/07/10/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&amp;%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://irving18.github.io" target="_blank">Android高级直通车</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/Android%E8%BF%9B%E9%98%B6/">Android进阶</a><a class="post-meta__tags" href="/tags/Framework/">Framework</a><a class="post-meta__tags" href="/tags/AMS/">AMS</a><a class="post-meta__tags" href="/tags/%E7%B3%BB%E7%BB%9F%E6%9C%8D%E5%8A%A1/">系统服务</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,twitter,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc/sharejs/dist/js/social-share.min.js" defer></script></div></div><div class="post-reward"><div class="reward-button"><i class="fas fa-qrcode"></i>赞助</div><div class="reward-main"><ul class="reward-all"><li class="reward-item"><a href="/img/wechat_pay.png" target="_blank"><img class="post-qr-code-img" src="/img/wechat_pay.png" alt="wechat"/></a><div class="post-qr-code-desc">wechat</div></li></ul></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2024/07/12/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)%EF%BC%9AWindow%E7%9A%84%E4%BD%BF%E7%94%A8%E7%AF%87/" title="Framework系统篇4-WindowManagerService(WMS)：Window的使用篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)：Window的使用篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、Window和WindowManager、WMS的关系 window:它是一个抽象类，具体实现类为 PhoneWindow ，它对 View 进行管理。Window是View的容器，View是Window的具体表现内容； windowManager:是一个接口类，继承自接口 ViewManager ，从它的名称就知道它是用来管理 Window 的，它的实现类为 WindowManagerImpl； WMS:是窗口的管理者，它负责窗口的启动、添加和删除。另外窗口的大小和层级也是由它进行管理的；   二、Window的分类：LayoutParams.type 属性    分类 说明 是否需要权限    Application Window(应用窗口) 例如Activity；【取值范围为1~99】 -   Sub Window(子窗口) 不能独立存在，需要依附在其他窗口，例如PopupWindow，Dialog【取值范围为1000~1999】 -   System...</div></div></div></a><a class="pagination-related" href="/2024/07/09/Framework%E7%B3%BB%E7%BB%9F%E7%AF%872-ActivityManagerService(AMS)%E5%90%AF%E5%8A%A8%E7%AF%87/" title="Framework系统篇2-ActivityManagerService(AMS)启动篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">Framework系统篇2-ActivityManagerService(AMS)启动篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、前述在【Fw-系统启动流程】中已经知道，SystemServer进程的run()方法：  1、startBootstrapServices(); 启动引导服务：AMS、PMS、PowerManagerServic 2、startCoreServices(); 启动核心服务：BatteryService 3、startOtherServices(); 启动其他服务：如WMS  这其中还会调用startBootPhase() 方法，  1、传入不同的phase [feɪz]...</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2024/07/08/Framework%E7%B3%BB%E7%BB%9F%E7%AF%871-Android%E7%B3%BB%E7%BB%9F%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B/" title="Framework系统篇1-Android系统启动流程"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-08</div><div class="info-item-2">Framework系统篇1-Android系统启动流程</div></div><div class="info-2"><div class="info-item-1">[toc]                                            一、系统启动入口 简图中我们关注的重点：  1、core、main、late-start三种类型任务 2、与AMS类似的系统进程是通过servicemanager来获取IBinder对象，从而得到BpBinder，进而通过binder来通信的 3、普通应用间，是通过Service组件，来获取IBinder对象，从而得到BpBinder，进程通过binder来通信的；    &#x2F;system&#x2F;core&#x2F;init&#x2F;init.cpp&#x2F;system&#x2F;core&#x2F;rootdir&#x2F;init.rc  （一）init.rc：标识core、main、late_start类型服务 12345678910111213141516#6.0以前的源码//1、Linux以服务形式启动ServiceManagerservice servicemanager /system/bin/servicemanager   ...</div></div></div></a><a class="pagination-related" href="/2024/07/09/Framework%E7%B3%BB%E7%BB%9F%E7%AF%872-ActivityManagerService(AMS)%E5%90%AF%E5%8A%A8%E7%AF%87/" title="Framework系统篇2-ActivityManagerService(AMS)启动篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-09</div><div class="info-item-2">Framework系统篇2-ActivityManagerService(AMS)启动篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、前述在【Fw-系统启动流程】中已经知道，SystemServer进程的run()方法：  1、startBootstrapServices(); 启动引导服务：AMS、PMS、PowerManagerServic 2、startCoreServices(); 启动核心服务：BatteryService 3、startOtherServices(); 启动其他服务：如WMS  这其中还会调用startBootPhase() 方法，  1、传入不同的phase [feɪz]...</div></div></div></a><a class="pagination-related" href="/2024/07/16/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)2%EF%BC%9A%E5%90%AF%E5%8A%A8%E7%AF%87/" title="Framework系统篇4-WindowManagerService(WMS)2：启动篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-16</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)2：启动篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、概述（1）WMS、Surface、SurfaceFlinger关系WMS核心关系：  Surface: 代表画布 WMS: 添加window的过程主要功能是添加Surface,管理所有的Surface布局,以及Z轴排序问题; SurfaceFinger: 将Surface按次序混合并显示到物理屏幕上;  （2）WMS整体认识  一、WMS端： WMS继承于IWindowManager.Stub, 作为Binder服务端; WMS的成员变量mSessions保存着所有的Session对象,Session继承于IWindowSession.Stub, 作为Binder服务端; 成员变量mPolicy: 实例对象为PhoneWindowManager,用于实现各种窗口相关的策略; 成员变量mChoreographer: 用于控制窗口动画,屏幕旋转等操作; 成员变量mDisplayContents: 记录一组DisplayContent对象,这个跟多屏输出相关; 成员变量mTokenMap: 保存所有的WindowToken对象;...</div></div></div></a><a class="pagination-related" href="/2024/07/14/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)1%EF%BC%9A%E6%95%B4%E4%BD%93%E8%AE%A4%E8%AF%86+%E6%A6%82%E5%BF%B5/" title="Framework系统篇4-WindowManagerService(WMS)1：整体认识+概念"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-14</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)1：整体认识+概念</div></div><div class="info-2"><div class="info-item-1">[toc] 一、WMS作用的整体认知  1、首先WMS在启动之后会设置给AMS，也就是AMS会持有WMS的实例，方便后续调用 2、WMS内部 通过WindowManager管理WindowState，即Window的状态等； 通过WindowAnimator处理动画   3、和InputManagerService进行交互，处理输入事件dispatchTouchEvent() 分发触摸事件 4、通过SurfaceControl去SurfaceFlinger中申请Surface空间，将Surface返回给App进程，并管理Surface画布，通过Z轴混合后上帧给SurfaceFlinger进行渲染；  二、WMS中成员变量的作用 一、WMS端： WMS继承于IWindowManager.Stub, 作为Binder服务端; WMS的成员变量mSessions保存着所有的Session对象,Session继承于IWindowSession.Stub, 作为Binder服务端; 成员变量mPolicy:...</div></div></div></a><a class="pagination-related" href="/2024/07/18/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)3%EF%BC%9A%E5%90%AF%E5%8A%A8%E7%AA%97%E5%8F%A3/" title="Framework系统篇4-WindowManagerService(WMS)3：启动窗口"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-18</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)3：启动窗口</div></div><div class="info-2"><div class="info-item-1">[toc] https://gityuan.com/2017/01/15/wms_starting_window/ 一、捋清一些概念（1）Activity、window、WindowState、windowToken、IApplicationToken的关系？1、IApplicationToken是进程独有的 在AMS启动Activity时startProcessLocked()，创建进程后attachApplication()时传给AMS的 是个Binder对象，用来跨进程通信的 会被存储在ActivityRecord.appToken中；  2、Activity和windowToken是一对多的 主窗口和 Activity：对于每个 Activity，当它的主窗口创建时，会有一个与该 Activity 相关的 windowToken。这个 windowToken 可以被认为与 Activity 一一对应，因为每个 Activity 的主窗口有且只有一个 windowToken。  子窗口（如 Dialog、PopupWindow 等）：一个 Activity...</div></div></div></a><a class="pagination-related" href="/2024/07/12/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)%EF%BC%9AWindow%E7%9A%84%E4%BD%BF%E7%94%A8%E7%AF%87/" title="Framework系统篇4-WindowManagerService(WMS)：Window的使用篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-12</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)：Window的使用篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、Window和WindowManager、WMS的关系 window:它是一个抽象类，具体实现类为 PhoneWindow ，它对 View 进行管理。Window是View的容器，View是Window的具体表现内容； windowManager:是一个接口类，继承自接口 ViewManager ，从它的名称就知道它是用来管理 Window 的，它的实现类为 WindowManagerImpl； WMS:是窗口的管理者，它负责窗口的启动、添加和删除。另外窗口的大小和层级也是由它进行管理的；   二、Window的分类：LayoutParams.type 属性    分类 说明 是否需要权限    Application Window(应用窗口) 例如Activity；【取值范围为1~99】 -   Sub Window(子窗口) 不能独立存在，需要依附在其他窗口，例如PopupWindow，Dialog【取值范围为1000~1999】 -   System...</div></div></div></a></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">王征</div><div class="author-info-description"></div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">41</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">18</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">3</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/IRVING18"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="mailto:ivring18@163.com" target="_blank" title="Email"><i class="fas fa-envelope" style="color: #4a7dbe;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content"><span>Android开发者迈向<span style="color:red; weight:bold" >高级Android开发</span>的直通车，总结了各大面试考点！<span></br><span>一个通人性的博主，码字不易，用爱发电。希望大家多多支持。</span><img width="250px" src="/img/wechat_pay.png"></div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#%E7%9B%AE%E5%BD%95"><span class="toc-number">1.</span> <span class="toc-text">目录</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E3%80%81%E7%AE%80%E8%BF%B0%E7%B3%BB%E7%BB%9F%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B"><span class="toc-number">1.1.</span> <span class="toc-text">一、简述系统启动流程</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E5%90%AF%E5%8A%A8%E7%AE%80%E5%9B%BE"><span class="toc-number">1.1.1.</span> <span class="toc-text">启动简图</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#1%E3%80%81%E4%B8%BA%E4%BB%80%E4%B9%88%E5%92%8Czygoet%E9%80%9A%E4%BF%A1%E6%98%AFSocket%E5%91%A2%EF%BC%9F"><span class="toc-number">1.1.1.1.</span> <span class="toc-text">1、为什么和zygoet通信是Socket呢？</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#2%E3%80%81%E5%A6%82%E6%9E%9C%E6%98%AF%E5%A4%9A%E7%BA%BF%E7%A8%8B%E6%93%8D%E4%BD%9C%E6%97%B6%EF%BC%8Cfork%E4%BC%9A%E6%9C%89%E9%97%AE%E9%A2%98%EF%BC%9F"><span class="toc-number">1.1.1.2.</span> <span class="toc-text">2、如果是多线程操作时，fork会有问题？</span></a></li></ol></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E3%80%81Activity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B"><span class="toc-number">1.2.</span> <span class="toc-text">一、Activity启动流程</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%881%EF%BC%89%E7%AE%80%E5%8C%96%E5%90%AF%E5%8A%A8App%E7%9A%84Activity%E7%9A%84%E6%B5%81%E7%A8%8B%EF%BC%9B"><span class="toc-number">1.2.1.</span> <span class="toc-text">（1）简化启动App的Activity的流程；</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%882%EF%BC%89Activity%E6%95%B4%E4%BD%93%E5%90%AF%E5%8A%A8%E8%BF%87%E7%A8%8B"><span class="toc-number">1.2.2.</span> <span class="toc-text">（2）Activity整体启动过程</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%8C%E3%80%81Zygoet-fork%E8%BF%9B%E7%A8%8B"><span class="toc-number">1.3.</span> <span class="toc-text">二、Zygoet fork进程</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%881%EF%BC%89runSelectLoop%E8%BD%AE%E8%AF%A2"><span class="toc-number">1.3.1.</span> <span class="toc-text">（1）runSelectLoop轮询</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%882%EF%BC%89fork%E8%BF%9B%E7%A8%8B"><span class="toc-number">1.3.2.</span> <span class="toc-text">（2）fork进程</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%883%EF%BC%89handleChildProc-%E8%B0%83%E7%94%A8%E6%96%B0%E8%BF%9B%E7%A8%8B%E5%88%9D%E5%A7%8B%E5%8C%96%E6%96%B9%E6%B3%95"><span class="toc-number">1.3.3.</span> <span class="toc-text">（3）handleChildProc 调用新进程初始化方法</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%884%EF%BC%89ActivityThread-main"><span class="toc-number">1.3.4.</span> <span class="toc-text">（4）ActivityThread.main</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%89%E3%80%81Activity%E5%90%AF%E5%8A%A8-%E7%BB%98%E5%88%B6%E6%B5%81%E7%A8%8B"><span class="toc-number">1.4.</span> <span class="toc-text">三、Activity启动&amp;绘制流程</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%881%EF%BC%89handleLaunchActivity%EF%BC%9AonAttach-Window%E5%88%9B%E5%BB%BA-%E3%80%81onCreate-DecorView%E5%88%9B%E5%BB%BA"><span class="toc-number">1.4.1.</span> <span class="toc-text">（1）handleLaunchActivity：onAttach(Window创建)、onCreate(DecorView创建)</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%881%EF%BC%89handleLaunchActivity%E6%BA%90%E7%A0%81"><span class="toc-number">1.4.2.</span> <span class="toc-text">（1）handleLaunchActivity源码</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%882%EF%BC%89handleResumeActivity%EF%BC%9A"><span class="toc-number">1.4.3.</span> <span class="toc-text">（2）handleResumeActivity：</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#0%E3%80%81%E5%85%88%E6%89%A7%E8%A1%8ConResume-%E5%9B%9E%E8%B0%83"><span class="toc-number">1.4.3.1.</span> <span class="toc-text">0、先执行onResume()回调</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#1%E3%80%81mGlobal-add-decorview-%E5%B9%B6%E5%88%9B%E5%BB%BAroot-ViewRootImpl-decorView"><span class="toc-number">1.4.3.2.</span> <span class="toc-text">1、mGlobal.add(decorview) 并创建root &#x3D; ViewRootImpl(decorView)</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#2%E3%80%81ViewRootImpl-requestLayout-%E5%BC%80%E5%90%AF%E7%BB%98%E5%88%B6%E6%B5%81%E7%A8%8B"><span class="toc-number">1.4.3.3.</span> <span class="toc-text">2、ViewRootImpl.requestLayout() 开启绘制流程</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#3%E3%80%81ViewRootImpl-mWindowSession-addToDisPlay-mInputChannel-%E7%9B%91%E5%90%AC%E8%BE%93%E5%85%A5%E4%BA%8B%E4%BB%B6"><span class="toc-number">1.4.3.4.</span> <span class="toc-text">3、ViewRootImpl.mWindowSession.addToDisPlay(mInputChannel) 监听输入事件</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%883%EF%BC%89Choregrapher-%E5%9B%9E%E8%B0%83TraversalRunnable%E4%BB%BB%E5%8A%A1%E8%BF%87%E7%A8%8B%EF%BC%9B"><span class="toc-number">1.4.4.</span> <span class="toc-text">（3）Choregrapher 回调TraversalRunnable任务过程；</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#1%E3%80%81%E6%94%B6%E5%88%B0postCallback-Choreographer-CALLBACK-TRAVERSAL-mTraversalRunnable"><span class="toc-number">1.4.4.1.</span> <span class="toc-text"> 1、收到postCallback(Choreographer.CALLBACK_TRAVERSAL, mTraversalRunnable)</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#2%E3%80%81%E5%88%A4%E6%96%AD%E6%98%AF%E5%90%A6%E5%9C%A8%E4%B8%BB%E7%BA%BF%E7%A8%8B%E4%B8%AD%EF%BC%9B%E5%9C%A8%E4%B8%BB%E7%BA%BF%E7%A8%8B%E6%89%A7%E8%A1%8CdoScheduleVsync"><span class="toc-number">1.4.4.2.</span> <span class="toc-text">  2、判断是否在主线程中；在主线程执行doScheduleVsync();</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#3%E3%80%81mDisplayEventReceiver-scheduleVsync-%E6%B3%A8%E5%86%8CFrameDisplayEventReceiver%E5%88%B0c%E5%B1%82"><span class="toc-number">1.4.4.3.</span> <span class="toc-text">  3、mDisplayEventReceiver.scheduleVsync(); 注册FrameDisplayEventReceiver到c层</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#4%E3%80%81onVsync-%E9%80%9A%E8%BF%87Handler%E5%8F%91%E5%9B%9E%E4%B8%BB%E7%BA%BF%E7%A8%8B-%E6%89%A7%E8%A1%8CdoFrame"><span class="toc-number">1.4.4.4.</span> <span class="toc-text"> 4、onVsync() 通过Handler发回主线程 &#x3D;&gt; 执行doFrame()</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%884%EF%BC%89RenderThread%E6%B8%B2%E6%9F%93"><span class="toc-number">1.4.5.</span> <span class="toc-text"> （4）RenderThread渲染</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#0%E3%80%81initialzeIfNeeded-%E5%85%B3%E8%81%94mSurface%EF%BC%9B"><span class="toc-number">1.4.6.</span> <span class="toc-text"> 0、initialzeIfNeeded() 关联mSurface；</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1%E3%80%81%E6%9E%84%E5%BB%BA%E7%BB%98%E5%88%B6%E5%91%BD%E4%BB%A4%E6%A0%91-updateRootDisplayList"><span class="toc-number">1.4.7.</span> <span class="toc-text"> 1、构建绘制命令树 updateRootDisplayList</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2%E3%80%81%E6%89%A7%E8%A1%8C%E6%B8%B2%E6%9F%93%E7%BB%98%E5%88%B6%E4%BB%BB%E5%8A%A1-syncAndDrawFrame"><span class="toc-number">1.4.8.</span> <span class="toc-text"> 2、执行渲染绘制任务 syncAndDrawFrame</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%885%EF%BC%89SurfaceFlinger%E5%90%88%E6%88%90%E6%98%BE%E7%A4%BA"><span class="toc-number">1.4.9.</span> <span class="toc-text"> （5）SurfaceFlinger合成显示</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1%E3%80%81BufferQueue%E6%9C%BA%E5%88%B6"><span class="toc-number">1.4.10.</span> <span class="toc-text"> 1、BufferQueue机制</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2%E3%80%81sync%E5%90%8C%E6%AD%A5%E6%9C%BA%E5%88%B6"><span class="toc-number">1.4.11.</span> <span class="toc-text"> 2、sync同步机制</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%9B%9B%E3%80%81%E6%A3%80%E6%B5%8B%E4%B8%A2%E5%B8%A7%E6%96%B9%E6%A1%88"><span class="toc-number">1.5.</span> <span class="toc-text"> 四、检测丢帧方案</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%881%EF%BC%89%E5%BC%80%E6%BA%90%E7%BB%84%E4%BB%B6Tiny-Dance"><span class="toc-number">1.5.1.</span> <span class="toc-text"> （1）开源组件Tiny Dance</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%882%EF%BC%89%E5%8F%AF%E4%BB%A5%E9%80%9A%E8%BF%87Hook%E6%9D%A5%E6%A3%80%E6%B5%8B%E5%8D%A1%E9%A1%BF"><span class="toc-number">1.5.2.</span> <span class="toc-text">  （2）可以通过Hook来检测卡顿</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%883%EF%BC%89%E5%88%A9%E7%94%A8FrameInfo%E7%9B%91%E6%8E%A7%EF%BC%8Cgfxifo-google%E6%8F%90%E4%BE%9B%E7%9A%84"><span class="toc-number">1.5.3.</span> <span class="toc-text">  （3）利用FrameInfo监控，gfxifo google提供的</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%94%E3%80%81%E9%AB%98%E9%A2%91%E9%97%AE%E9%A2%98"><span class="toc-number">1.6.</span> <span class="toc-text">五、高频问题</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%881%EF%BC%89%E6%AF%8F16ms%E4%BC%9A%E8%B0%83%E7%94%A8%E4%B8%80%E6%AC%A1onDraw-%E6%96%B9%E6%B3%95%E5%90%97%EF%BC%9F%E4%B8%8D%E6%98%AF"><span class="toc-number">1.6.1.</span> <span class="toc-text">（1）每16ms会调用一次onDraw()方法吗？不是</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%882%EF%BC%89invilidate-%E6%96%B9%E6%B3%95%E4%BC%9A%E7%AB%8B%E5%88%BB%E5%88%B7%E6%96%B0%E5%90%97%EF%BC%9F%E4%B8%8D%E4%BC%9A"><span class="toc-number">1.6.2.</span> <span class="toc-text">（2）invilidate()方法会立刻刷新吗？不会</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%883%EF%BC%89%E4%B8%A2%E5%B8%A7%E6%98%AF%E5%9B%A0%E4%B8%BA%E8%BF%99%E4%B8%AA%E5%90%97%EF%BC%9F"><span class="toc-number">1.6.3.</span> <span class="toc-text">（3）丢帧是因为这个吗？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%884%EF%BC%89VSYNC%E4%BF%A1%E5%8F%B7%E6%98%AF%E5%9B%BA%E5%AE%9A16ms%EF%BC%9F"><span class="toc-number">1.6.4.</span> <span class="toc-text">（4）VSYNC信号是固定16ms？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%885%EF%BC%89Activity%E5%90%AF%E5%8A%A8%E5%90%8EView%E4%BD%95%E6%97%B6%E5%BC%80%E5%A7%8B%E7%BB%98%E5%88%B6%EF%BC%88onCreate%E4%B8%AD%E8%BF%98%E6%98%AFonResume%E4%B9%8B%E5%90%8E%EF%BC%9F%EF%BC%89"><span class="toc-number">1.6.5.</span> <span class="toc-text">（5）Activity启动后View何时开始绘制（onCreate中还是onResume之后？）</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%886%EF%BC%89%E5%AD%90%E7%BA%BF%E7%A8%8B%E8%83%BD%E4%B8%8D%E8%83%BD%E6%9B%B4%E6%96%B0ui%EF%BC%9F"><span class="toc-number">1.6.6.</span> <span class="toc-text">（6）子线程能不能更新ui？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1%E3%80%81%E5%9C%A8RootViewImpl%E5%88%9B%E5%BB%BA%E4%B9%8B%E5%89%8D%E5%8E%BB%E6%9B%B4%E6%96%B0%E6%98%AFOK%E7%9A%84%EF%BC%8C%E4%B8%8D%E4%BC%9A%E9%97%AA%E9%80%80%EF%BC%9B"><span class="toc-number">1.6.7.</span> <span class="toc-text">1、在RootViewImpl创建之前去更新是OK的，不会闪退；</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2%E3%80%81SurfaceView-%E4%B8%AD%E6%94%AF%E6%8C%81%E5%AD%90%E7%BA%BF%E7%A8%8B%E6%9B%B4%E6%96%B0UI"><span class="toc-number">1.6.8.</span> <span class="toc-text">2、SurfaceView 中支持子线程更新UI</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AD%E3%80%81%E6%9F%A5%E7%9C%8B%E5%B8%83%E5%B1%80"><span class="toc-number">1.7.</span> <span class="toc-text">六、查看布局</span></a></li></ol></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/20/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service%EF%BC%9AstartService%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-Service：startService源码分析">Framework四大组件篇-Service：startService源码分析</a><time datetime="2024-09-20T07:40:47.000Z" title="发表于 2024-09-20 15:40:47">2024-09-20</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/17/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service%EF%BC%9AbindService%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-Service：bindService源码分析">Framework四大组件篇-Service：bindService源码分析</a><time datetime="2024-09-17T07:40:36.000Z" title="发表于 2024-09-17 15:40:36">2024-09-17</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/16/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service1%E4%BD%BF%E7%94%A8%E7%AF%87/" title="Framework四大组件篇-Service1使用篇">Framework四大组件篇-Service1使用篇</a><time datetime="2024-09-16T07:40:35.000Z" title="发表于 2024-09-16 15:40:35">2024-09-16</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/07/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-ContentProvider%E5%90%AF%E5%8A%A8%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-ContentProvider启动源码分析">Framework四大组件篇-ContentProvider启动源码分析</a><time datetime="2024-09-07T07:39:36.000Z" title="发表于 2024-09-07 15:39:36">2024-09-07</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/08/30/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-BroadCast%E5%8E%9F%E7%90%86%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-BroadCast原理源码分析">Framework四大组件篇-BroadCast原理源码分析</a><time datetime="2024-08-30T07:40:05.000Z" title="发表于 2024-08-30 15:40:05">2024-08-30</time></div></div></div></div></div></div></main><footer id="footer" style="background-image: url(/img/bg.png);"><div id="footer-wrap"><div class="copyright">&copy;2024 By 王征</div><div class="footer_custom_text"><a href=""><img class="icp-icon" src="/img/avatar.jpg"><span>一个通人性的博主</span></a></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js"></script><script src="/js/main.js"></script><div class="js-pjax"></div><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></div></body></html>

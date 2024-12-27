@@ -1,0 +1,637 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="light"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>Framework系统篇4-WindowManagerService(WMS)4：WMS角度看Activity启动流程 | Android高级直通车</title><meta name="author" content="王征"><meta name="copyright" content="王征"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="ffffff"><meta name="description" content="https:&#x2F;&#x2F;juejin.cn&#x2F;post&#x2F;7385107260614295579https:&#x2F;&#x2F;mp.weixin.qq.com&#x2F;s&#x2F;n0lzyWAZTHsyOPZZN_Yd3w 目录 一、引言 二、ViewRootImpl和Window、WindowManagerGlobal之间的关系 三、Window （1）Window和WindowManager、WMS的关系 （2）Window的分类">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Framework系统篇4-WindowManagerService(WMS)4：WMS角度看Activity启动流程">
+<meta property="og:url" content="https://irving18.github.io/2024/07/19/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B/index.html">
+<meta property="og:site_name" content="Android高级直通车">
+<meta property="og:description" content="https:&#x2F;&#x2F;juejin.cn&#x2F;post&#x2F;7385107260614295579https:&#x2F;&#x2F;mp.weixin.qq.com&#x2F;s&#x2F;n0lzyWAZTHsyOPZZN_Yd3w 目录 一、引言 二、ViewRootImpl和Window、WindowManagerGlobal之间的关系 三、Window （1）Window和WindowManager、WMS的关系 （2）Window的分类">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://irving18.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2024-07-19T07:38:50.000Z">
+<meta property="article:modified_time" content="2024-12-27T09:05:49.803Z">
+<meta property="article:author" content="王征">
+<meta property="article:tag" content="Android进阶">
+<meta property="article:tag" content="Framework">
+<meta property="article:tag" content="系统服务">
+<meta property="article:tag" content="WMS">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://irving18.github.io/img/avatar.jpg"><link rel="shortcut icon" href="/img/avatar.jpg"><link rel="canonical" href="https://irving18.github.io/2024/07/19/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', 'ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: undefined,
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":true},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyload: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: 'Framework系统篇4-WindowManagerService(WMS)4：WMS角度看Activity启动流程',
+  isPost: true,
+  isHome: false,
+  isHighlightShrink: false,
+  isToc: true,
+  isShuoshuo: false
+}</script><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="onerror=null;src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">41</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">18</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">3</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 文章</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg" id="page-header" style="background-image: url(/img/bg.png);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">Android高级直通车</span></a><a class="nav-page-title" href="/"><span class="site-name">Framework系统篇4-WindowManagerService(WMS)4：WMS角度看Activity启动流程</span></a></span><div id="menus"><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 文章</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">Framework系统篇4-WindowManagerService(WMS)4：WMS角度看Activity启动流程</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2024-07-19T07:38:50.000Z" title="发表于 2024-07-19 15:38:50">2024-07-19</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2024-12-27T09:05:49.803Z" title="更新于 2024-12-27 17:05:49">2024-12-27</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/Android%E8%BF%9B%E9%98%B6/">Android进阶</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">3.8k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>14分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><p><a target="_blank" rel="noopener" href="https://juejin.cn/post/7385107260614295579">https://juejin.cn/post/7385107260614295579</a><br><a target="_blank" rel="noopener" href="https://mp.weixin.qq.com/s/n0lzyWAZTHsyOPZZN_Yd3w">https://mp.weixin.qq.com/s/n0lzyWAZTHsyOPZZN_Yd3w</a></p>
+<h1 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h1><ul>
+<li><a href="#jump1">一、引言</a></li>
+<li><a href="#jump2">二、ViewRootImpl和Window、WindowManagerGlobal之间的关系</a></li>
+<li><a href="#jump3">三、Window</a><ul>
+<li><a href="#jump3_1">（1）Window和WindowManager、WMS的关系</a></li>
+<li><a href="#jump3_2">（2）Window的分类</a><ul>
+<li><a href="#jump3_2_1">1、Application Window(应用窗口)</a></li>
+<li><a href="#jump3_2_2">2、Sub Window(子窗口)</a></li>
+<li><a href="#jump3_2_3">3、System Window(系统窗口)</a></li>
+</ul>
+</li>
+<li><a href="#jump3_3">（3）Window相关标识</a></li>
+</ul>
+</li>
+<li><a href="#jump4">四、WindowManager</a><ul>
+<li><a href="#jump4_1">（1）addView() 监听IMS</a></li>
+<li><a href="#jump4_2">（2）removeView() 会调用WMS的removeWindow()</a></li>
+</ul>
+</li>
+<li><a href="#jump5">五、WMS工作原理</a><ul>
+<li><a href="#jump5_1">（1）addWindow()</a></li>
+<li><a href="#jump5_2">（2）removeWindow()</a></li>
+</ul>
+</li>
+<li><a href="#jump6">六、WMS: 输入事件派发</a><ul>
+<li><a href="#jump6_1">（1）核心点</a></li>
+<li><a href="#jump6_2">（2）mWindowSession.addToDisplay(mInputChannel); 设置输入监听</a></li>
+<li><a href="#jump6_3">（3）IMS：输入事件socket与app进程通信</a></li>
+</ul>
+</li>
+<li><a href="#jump7">七、总结：AMS&#x2F;WMS 看Activity启动</a></li>
+<li><a href="">参考链接</a><ul>
+<li><a target="_blank" rel="noopener" href="https://gityuan.com/2016/12/24/input-ui/">gityuan IMS、WMS内容</a></li>
+<li><a target="_blank" rel="noopener" href="https://www.jianshu.com/p/d41fe965e9e6">努比亚WMS动画分发</a></li>
+</ul>
+</li>
+</ul>
+<h2 id="一、引言"><a href="#一、引言" class="headerlink" title="一、引言"></a><span id="jump1"/>一、引言</h2><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_1.jpg" alt="v2-e40a10b9e95ca306092f1ae957b7986a_r.png"><br>在AMS：Activity启动流程中已经了解到了</p>
+<ul>
+<li>（1）AMS 调用ZYGOTE_PROCESS.start(…);<ul>
+<li>Zygoet fork app进程</li>
+</ul>
+</li>
+<li>（2）AMS：调用bindApplication() <ul>
+<li>APP进程：创建Application对象</li>
+<li>App进程：attachApplication(IApplication.stub) 注册IBinder给AMS</li>
+</ul>
+</li>
+<li>（3）AMS：H.LAUNCH_ACTIVITY<ul>
+<li>ActivityThread：handleLaunchActivity -&gt; performLaunchAcitvity<ul>
+<li>App进程：attach()反射创建Activity、创建Window对象PhoneWindo</li>
+<li>App进程：onCreate()、setContentView()：创建DecorView</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>（4）AMS：H.RESUME_ACTIVITY<ul>
+<li>App进程：<ul>
+<li>new ViewRootImpl()</li>
+<li>window.addView(decorView) </li>
+<li>root.setView() 走Choreography渲染流程了</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p>这其中window.addView()，Decorview的渲染就交给了PhoneWindow的对象处理了；</p>
+<blockquote>
+<p>从window.addView()承接绘制时，就决定了WMS的角色：<br>WMS就相当于协调者，用于协调view布局，绘制</p>
+</blockquote>
+<p>而root.setView() </p>
+<ul>
+<li>创建爱你</li>
+</ul>
+<p>然后会走Choreography，最终交给SurfaceFilinger进程帧合成，最终展示到屏幕；<br>这部分在RenderThread&amp;SurfaceFlinger中详解；</p>
+<h2 id="二、ViewRootImpl和Window、WindowManagerGlobal之间的关系"><a href="#二、ViewRootImpl和Window、WindowManagerGlobal之间的关系" class="headerlink" title="二、ViewRootImpl和Window、WindowManagerGlobal之间的关系"></a><span id="jump2">二、ViewRootImpl和Window、WindowManagerGlobal之间的关系</h2><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_2.jpg" alt="2321.png"></p>
+<table>
+<thead>
+<tr>
+<th>类</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>ViewRootImpl</td>
+<td>ViewRootImpl 是 View 的最高层级，是所有 View 的根。<p>ViewRootImpl 实现了 View 和 WindowManager 之间所需要的协议。<p>ViewRootImpl 的创建过程是从 WindowManagerImpl 中开始的。<p>View 的测量，布局，绘制以及上屏，都是从 ViewRootImpl 中开始的。</td>
+</tr>
+<tr>
+<td>Window</td>
+<td>界面中所有的元素都是由 View 构成的，View 是依附于 Window 上面的。<p>Window 只是一个抽象概念，把界面抽象成一个 窗口，也可以抽象成一个 View。</td>
+</tr>
+<tr>
+<td>ViewManager</td>
+<td>一个接口，内部定义了三个方法，用来对 VIew 的添加，更新和删除。<p> addView() <p> updateViewLayout()<p>removeView()</td>
+</tr>
+<tr>
+<td>WindowManager</td>
+<td>也是一个接口，继承自 ViewManager，通过 WindowManager 来管理 Window，<p>将 View 附加到 Window 上。他有一个实现类 WindowManagerImpl。</td>
+</tr>
+<tr>
+<td>WindowManagerImpl</td>
+<td>WindowManager 的实现类<p>WindowManagerImpl 中的内部方法实现都是通过代理类 WindowManagerGlobal 来完成。</td>
+</tr>
+<tr>
+<td>WindowManagerGlobal</td>
+<td>WindowManagerGlobal 是一个单例，也就是说一个进程中只有一个 WindowManagerGlobal对象，<p>他服务与所有页面的 View。</td>
+</tr>
+<tr>
+<td>ViewParent</td>
+<td>一个接口，定义了将成为 View 父级类的职责。</td>
+</tr>
+</tbody></table>
+<h2 id="三、Window"><a href="#三、Window" class="headerlink" title="三、Window"></a><span id="jump3">三、Window</h2><h3 id="（1）Window和WindowManager、WMS的关系"><a href="#（1）Window和WindowManager、WMS的关系" class="headerlink" title="（1）Window和WindowManager、WMS的关系"></a><span id="jump3_1">（1）Window和WindowManager、WMS的关系</h3><ol>
+<li>window:它是一个抽象类，具体实现类为 PhoneWindow ，它对 View 进行管理。Window是View的容器，View是Window的具体表现内容；</li>
+<li>windowManager:是一个接口类，继承自接口 ViewManager ，从它的名称就知道它是用来管理 Window 的，它的实现类为 WindowManagerImpl；</li>
+<li>WMS:是窗口的管理者，它负责窗口的启动、添加和删除。另外窗口的大小和层级也是由它进行管理的；</li>
+</ol>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_3.jpg" alt="image.png"></p>
+<h3 id="（2）Window的分类"><a href="#（2）Window的分类" class="headerlink" title="（2）Window的分类"></a><span id="jump3_2">（2）Window的分类</h3><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_4.jpg" alt="image.png"></p>
+<table>
+<thead>
+<tr>
+<th>分类</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Application Window(应用窗口)</td>
+<td>例如Activity；【取值范围为1~99】</td>
+</tr>
+<tr>
+<td>Sub Window(子窗口)</td>
+<td>不能独立存在，需要依附在其他窗口，例如PopupWindow，Dialog【取值范围为1000~1999】</td>
+</tr>
+<tr>
+<td>System Window(系统窗口)</td>
+<td>例如Toast、输入法窗口、系统音量条窗口、系统错误窗口等【2000~2999】</td>
+</tr>
+</tbody></table>
+<h4 id="1、Application-Window-应用窗口"><a href="#1、Application-Window-应用窗口" class="headerlink" title="1、Application Window(应用窗口)"></a><span id="jump3_2_1">1、Application Window(应用窗口)</h4><blockquote>
+<p>所有Activity默认的窗口类型都是TYPE_APPLICATION，WmS在进行窗口叠加时，会动态改变应用窗口的层值，但层值不会大于99。</p>
+</blockquote>
+<p>应用窗口包含以下几类：</p>
+<table>
+<thead>
+<tr>
+<th>分类</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>FIRST_APPLICATION_WINDOW &#x3D; 1</td>
+<td>第一个普通应用窗口</td>
+</tr>
+<tr>
+<td>TYPE_BASE_APPLICATION &#x3D; 1</td>
+<td>基窗口，所有其他类型的应用窗口将出现在基窗口上层</td>
+</tr>
+<tr>
+<td>TYPE_APPLICATION &#x3D; 2</td>
+<td>普通应用窗口</td>
+</tr>
+<tr>
+<td>TYPE_APPLICATION_STARTING &#x3D; 3</td>
+<td>应用程序启动时先显示此窗口，当真正的窗口配置完成后，此窗口被关闭</td>
+</tr>
+<tr>
+<td>LAST_APPLICATION_WINDOW &#x3D; 99</td>
+<td>最后一个应用窗口</td>
+</tr>
+</tbody></table>
+<h4 id="2、Sub-Window-子窗口"><a href="#2、Sub-Window-子窗口" class="headerlink" title="2、Sub Window(子窗口)"></a><span id="jump3_2_2">2、Sub Window(子窗口)</h4><table>
+<thead>
+<tr>
+<th>分类</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>FIRST_SUB_WINDOW &#x3D; 1000</td>
+<td>第一个子窗口</td>
+</tr>
+<tr>
+<td>TYPE_APPLICATION_PANEL &#x3D; FIRST_SUB_WINDOW</td>
+<td>应用窗口的子窗口，PopupWindow的默认类型</td>
+</tr>
+<tr>
+<td>TYPE_APPLICATION_MEDIA &#x3D; FIRST_SUB_WINDOW + 1</td>
+<td>用来显示Media的窗口</td>
+</tr>
+<tr>
+<td>TYPE_APPLICATION_SUB_PANEL &#x3D; FIRST_SUB_WINDOW + 2</td>
+<td>TYPE_APPLICATION_PANEL的子窗口</td>
+</tr>
+<tr>
+<td>TYPE_APPLICATION_ATTACHED_DIALOG &#x3D; FIRST_SUB_WINDOW + 3</td>
+<td>Dialog、OptionMenu、ContextMenu的默认类型</td>
+</tr>
+<tr>
+<td>TYPE_APPLICATION_MEDIA_OVERLAY &#x3D; FIRST_SUB_WINDOW + 4</td>
+<td>TYPE_APPLICATION_MEDIA的重影窗口，显示在TYPE_APPLICATION_MEDIA和应用窗口之间</td>
+</tr>
+<tr>
+<td>LAST_SUB_WINDOW &#x3D; 1999</td>
+<td>最后一个子窗口</td>
+</tr>
+</tbody></table>
+<h4 id="3、System-Window-系统窗口"><a href="#3、System-Window-系统窗口" class="headerlink" title="3、System Window(系统窗口)"></a><span id="jump3_2_3">3、System Window(系统窗口)</h4><p>系统类的弹框，限制权限太多，基本用不到</p>
+<table>
+<thead>
+<tr>
+<th>分类</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>FIRST_SYSTEM_WINDOW &#x3D; 2000</td>
+<td>第一个系统窗口</td>
+</tr>
+<tr>
+<td>TYPE_STATUS_BAR &#x3D; FIRST_SYSTEM_WINDOW</td>
+<td>状态栏窗口</td>
+</tr>
+<tr>
+<td>TYPE_SEARCH_BAR &#x3D; FIRST_SYSTEM_WINDOW +1</td>
+<td>搜索条窗口</td>
+</tr>
+<tr>
+<td>TYPE_PHONE &#x3D; FIRST_SYSTEM_WINDOW + 2</td>
+<td>来电显示窗口</td>
+</tr>
+<tr>
+<td>TYPE_SYSTEM_ALERT &#x3D; FIRST_SYSTEM_WINDOW + 3</td>
+<td>警告对话框</td>
+</tr>
+<tr>
+<td>TYPE_KEYGUARD &#x3D; FIRST_SYSTEM_WINDOW + 4</td>
+<td>屏保</td>
+</tr>
+<tr>
+<td>TYPE_TOAST &#x3D; FIRST_SYSTEM_WINDOW + 5</td>
+<td>Toast对应的窗口</td>
+</tr>
+</tbody></table>
+<h3 id="（3）Window相关标识"><a href="#（3）Window相关标识" class="headerlink" title="（3）Window相关标识"></a><span id="jump3_3">（3）Window相关标识</h3><table>
+<thead>
+<tr>
+<th>分类</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>FLAG_ALLOW_LOCK_WHILE_SCREEN_ON</td>
+<td>当Window可见时允许锁屏</td>
+</tr>
+<tr>
+<td>FLAG_NOT_FOCUSABLE</td>
+<td>Window 不能获得输入焦点，即不接受任何按键或按钮事件，<p> 例如该 Window 上 有 EditView，点击 EditView 是 不会弹出软键盘的<p> Window 范围外的事件依旧为原窗口处理；<p>例如点击该窗口外的view，依然会有响应。另外只要设置了此Flag，都将会启用FLAG_NOT_TOUCH_MODAL</td>
+</tr>
+<tr>
+<td>FLAG_NOT_TOUCH_MODAL</td>
+<td>设置了该 Flag,将 Window 之外的按键事件发送给后面的 Window 处理, 而自己只会处理 Window 区域内的触摸事件；<p>Window 之外的 view 也是可以响应 touch 事件。</td>
+</tr>
+<tr>
+<td>FLAG_NOT_TOUCHABLE</td>
+<td>设置了该Flag，表示该 Window 将不会接受任何 touch 事件，<p>例如点击该 Window 不会有响应，只会传给下面有聚焦的窗口</td>
+</tr>
+<tr>
+<td>FLAG_KEEP_SCREEN_ON</td>
+<td>只要 Window 可见时屏幕就会一直亮着，视频播放、游戏</td>
+</tr>
+<tr>
+<td>FLAG_LAYOUT_NO_LIMITS</td>
+<td>允许 Window 超过屏幕之外</td>
+</tr>
+<tr>
+<td>FLAG_IGNORE_CHEEK_PRESSES</td>
+<td>当用户的脸贴近屏幕时（比如打电话），不会去响应此事件</td>
+</tr>
+<tr>
+<td>FLAG_SHOW_WHEN_LOCKED</td>
+<td>当用户的脸贴近屏幕时（比如打电话），不会去响应此事件</td>
+</tr>
+<tr>
+<td>FLAG_IGNORE_CHEEK_PRESSES</td>
+<td>窗口可以在锁屏的 Window 之上显示, 使用Activity#setShowWhenLocked(boolean)方法代替</td>
+</tr>
+</tbody></table>
+<h2 id="四、WindowManager"><a href="#四、WindowManager" class="headerlink" title="四、WindowManager"></a><span id="jump4">四、WindowManager</h2><p>先看下类图<br><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_5.jpg" alt="image.png"></p>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_6.jpg" alt="image.png"></p>
+<h3 id="（1）addView"><a href="#（1）addView" class="headerlink" title="（1）addView()"></a><span id="jump4_1">（1）addView()</h3><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_7.jpg" alt="image.png"></p>
+<p>上边我们已经很熟悉了，<br>主要关注window.addView()之后的流程</p>
+<ul>
+<li>ViewRootImpl.setView()<ul>
+<li>（1）requestLayout()这个在AMS中已经详解过了</li>
+<li>（2）mWindowSession.addToDisplay(mInputChannel)<ul>
+<li>1、创建app进程的BnBinder，并注册给WMS：IWindowSessionCallback.Stub()：</li>
+<li>2、调用Session.addWindow()<ul>
+<li>mService.addWindow() 这个mService就是WMS的<ul>
+<li>发送给WMS addWindow()指令</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>3、mInputChannel，用于接收InputManagerService的输入事件<ul>
+<li>在WMS中持有InputManagerService对象实例；通过它转发</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">#ViewRootImpl.java</span><br><span class="line"></span><br><span class="line"><span class="keyword">final</span> IWindowSession mWindowSession;</span><br><span class="line"></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">setView</span><span class="params">(View view, WindowManager.LayoutParams attrs, View panelParentView)</span> &#123;</span><br><span class="line">    res = mWindowSession.addToDisplay(mWindow, mSeq, mWindowAttributes,</span><br><span class="line">            getHostVisibility(), mDisplay.getDisplayId(),</span><br><span class="line">            mAttachInfo.mContentInsets, mAttachInfo.mStableInsets,</span><br><span class="line">            mAttachInfo.mOutsets, mInputChannel);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>IWindowSession是谁呢？<br>就是当前进程的BnBinder对象，用于接收WMS通信数据的；</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="title function_">ViewRootImpl</span><span class="params">(Context context, Display display)</span> &#123;</span><br><span class="line">    mWindowSession = WindowManagerGlobal.getWindowSession();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">static</span> IWindowSession <span class="title function_">getWindowSession</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="comment">//1、获取WMS的BpBinder对象</span></span><br><span class="line">    <span class="type">IWindowManager</span> <span class="variable">windowManager</span> <span class="operator">=</span> getWindowManagerService();</span><br><span class="line">    <span class="comment">//2、创建app进程的BnBinder对象，用于接收WMS数据</span></span><br><span class="line">    sWindowSession = windowManager.openSession(</span><br><span class="line">            <span class="keyword">new</span> <span class="title class_">IWindowSessionCallback</span>.Stub() &#123;</span><br><span class="line">                <span class="meta">@Override</span></span><br><span class="line">                <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">onAnimatorScaleChanged</span><span class="params">(<span class="type">float</span> scale)</span> &#123;</span><br><span class="line">                    ValueAnimator.setDurationScale(scale);</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;,</span><br><span class="line">            imm.getClient(), imm.getInputContext());</span><br><span class="line">    <span class="keyword">return</span> sWindowSession;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>源码不太好找，实际类在这</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">#Session.java</span><br><span class="line"><span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">Session</span> <span class="keyword">extends</span> <span class="title class_">IWindowSession</span>.Stub &#123;</span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="keyword">public</span> <span class="type">int</span> <span class="title function_">addToDisplay</span><span class="params">(IWindow window, <span class="type">int</span> seq, WindowManager.LayoutParams attrs,</span></span><br><span class="line"><span class="params">            <span class="type">int</span> viewVisibility, <span class="type">int</span> displayId, Rect outContentInsets, Rect outStableInsets,</span></span><br><span class="line"><span class="params">            Rect outOutsets, InputChannel outInputChannel)</span> &#123;</span><br><span class="line">        <span class="comment">//调用WMS的addWindow方法</span></span><br><span class="line">        <span class="keyword">return</span> mService.addWindow(<span class="built_in">this</span>, window, seq, attrs, viewVisibility, displayId,</span><br><span class="line">                outContentInsets, outStableInsets, outOutsets, outInputChannel);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>具体addWindow()做了什么再下边WMS工作原理中继续分析；</p>
+<h3 id="（2）removeView"><a href="#（2）removeView" class="headerlink" title="（2）removeView()"></a><span id="jump4_2">（2）removeView()</h3><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_8.jpg" alt="image.png"></p>
+<h2 id="五、WMS工作原理"><a href="#五、WMS工作原理" class="headerlink" title="五、WMS工作原理"></a><span id="jump5">五、WMS工作原理</h2><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_9.jpg" alt="image.png"></p>
+<p>WMS中重要的一些属性释义</p>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_10.jpg" alt="image.png"></p>
+<p>从WMS类中包含的属性也可以看出WMS的主要职责，窗口管理、窗口动画以及监听输入进行事件派发。</p>
+<h3 id="（1）addWindow-过程"><a href="#（1）addWindow-过程" class="headerlink" title="（1）addWindow() 过程"></a><span id="jump5_1">（1）addWindow() 过程</h3><p>先了解几个核心类</p>
+<ul>
+<li><p>WindowToken：</p>
+<blockquote>
+<p>1.WindowToken具有令牌的作用，是对应用组件的行为进行规范管理的一个手段。<br>2.WindowToken由应用组件或其管理者负责向WMS声明并持有。<br>3.应用组件在需要新的窗口时，必须提供WindowToken以表明自己的身份，并且窗口的类型必须与所持有的WindowToken的类型一致，同时它将属于同一个应用组件的窗口组织在了一起；</p>
+</blockquote>
+</li>
+<li><p>DisplayContent：</p>
+<blockquote>
+<p>1.如果说WindowToken按照窗口之间的逻辑关系将其分组，那么DisplayContent则根据窗口的显示位置将其分组。<br>2.隶属于同一个DisplayContent的窗口将会被显示在同一个屏幕中。<br>每一个DisplayContent都对应这一个唯一的ID，在添加窗口时可以通过指定这个ID决定其将被显示在那个屏幕中。<br>3.DisplayContent是一个非常具有隔离性的一个概念。<br>处于不同DisplayContent的两个窗口在布局、显示顺序以及动画处理上不会产生任何耦合。<br>4.因此，就这几个方面来说，DisplayContent就像一个孤岛，所有这些操作都可以在其内部独立执行。因此，这些本来属于整个WMS全局性的操作，变成了DisplayContent内部的操作了。</p>
+</blockquote>
+</li>
+<li><p>WindowState：</p>
+</li>
+</ul>
+<blockquote>
+<p>1.表示一个窗口的所有属性，所以它是WMS中事实上的窗口；<br>2.当向WMS添加一个窗口时，WMS会为其创建一个WindowState。<br>3.另外WMS.addWindow()函数中看到新的WindowState被保存到mWindowMap中，键值为IWindow的Bp端。<br>4.mWindowMap是整个系统所有窗口的一个全集。</p>
+</blockquote>
+<p>上边我们知道</p>
+<ul>
+<li>ViewRootImpl.setView()<ul>
+<li>ViewRootImpl.addToDisplay()<ul>
+<li>1、创建app进程的BnBinder，并注册给WMS：IWindowSessionCallback.Stub()：</li>
+<li>2、调用Session.addWindow()<ul>
+<li>mService.addWindow() 这个mService就是WMS的<ul>
+<li>发送给WMS addWindow()指令</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p>那么我们继续看WMS中addWindow()方法做了什么？</p>
+<ul>
+<li>主要工作和WMS通信，添加window对象；</li>
+<li>创建inputChannel用于监听屏幕IMS输入</li>
+</ul>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line">#WindowManagerService.java API <span class="number">26</span>版本</span><br><span class="line"><span class="keyword">public</span> <span class="type">int</span> <span class="title function_">addWindow</span><span class="params">(Session session..., InputChannel outInputChannel)</span> &#123;</span><br><span class="line">    <span class="comment">//1、窗口检查，对要添加的窗口进行检查，如果窗口不满足条件，则直接返回</span></span><br><span class="line">    <span class="type">int</span> <span class="variable">res</span> <span class="operator">=</span> mPolicy.checkAddPermission(attrs, appOp);</span><br><span class="line">    <span class="keyword">if</span> (res != WindowManagerGlobal.ADD_OKAY) &#123;</span><br><span class="line">        <span class="keyword">return</span> res;</span><br><span class="line">    &#125;</span><br><span class="line">    </span><br><span class="line">    <span class="comment">//2、WindowToken相关处理，有的窗口类型需要提供WindowToken</span></span><br><span class="line">    <span class="type">WindowToken</span> <span class="variable">token</span> <span class="operator">=</span> displayContent.getWindowToken(hasParent ? parentWindow.mAttrs.token : attrs.token);</span><br><span class="line"></span><br><span class="line">    <span class="comment">//3、创建WIndowState</span></span><br><span class="line">    <span class="keyword">final</span> <span class="type">WindowState</span> <span class="variable">win</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">WindowState</span>(<span class="built_in">this</span>, session, client, token,。。。。);</span><br><span class="line">    </span><br><span class="line">    <span class="comment">//4、开启信道，监听屏幕输入事件</span></span><br><span class="line">    win.openInputChannel(outInputChannel);</span><br><span class="line">    </span><br><span class="line">    <span class="comment">//5、调用WindowMangerProxy 的方法，此方法会根据窗口的Type对LayoutParams的一些成员进行修改</span></span><br><span class="line">    mPolicy.adjustWindowParamsLw(win.mAttrs);</span><br><span class="line">    </span><br><span class="line">    <span class="comment">//6、调用WMS 将窗口添加到系统中</span></span><br><span class="line">    res = mPolicy.prepareAddWindowLw(win, attrs);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h3 id="（2）removeWindow"><a href="#（2）removeWindow" class="headerlink" title="（2）removeWindow()"></a><span id="jump5_2" />（2）removeWindow()</h3><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">void</span> <span class="title function_">removeWindow</span><span class="params">(Session session, IWindow client)</span> &#123;</span><br><span class="line"> <span class="keyword">synchronized</span> (mGlobalLock) &#123;</span><br><span class="line">        <span class="comment">//获取WindowState</span></span><br><span class="line">     <span class="type">WindowState</span> <span class="variable">win</span> <span class="operator">=</span> windowForClientLocked(session, client, <span class="literal">false</span>);</span><br><span class="line">     <span class="keyword">if</span> (win != <span class="literal">null</span>) &#123;</span><br><span class="line">         <span class="comment">//执行删除</span></span><br><span class="line">         win.removeIfPossible();</span><br><span class="line">         <span class="keyword">return</span>;</span><br><span class="line">     &#125;</span><br><span class="line"></span><br><span class="line">     <span class="comment">// Remove embedded window map if the token belongs to an embedded window</span></span><br><span class="line">     mEmbeddedWindowController.remove(client);</span><br><span class="line"> &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>win.removeIfPossible方法和它的名字一样，并不是直接执行删除操作，而是进行多个条件判断过滤，满足其中一个条件就会return，推迟删除操作。比如View正在运行一个动画，这是就会推迟删除操作直到动画完成。然后调用removeImmediately方法。</p>
+<h2 id="六、输入事件派发"><a href="#六、输入事件派发" class="headerlink" title="六、输入事件派发"></a><span id="jump6"/>六、输入事件派发</h2><h3 id="（1）核心点"><a href="#（1）核心点" class="headerlink" title="（1）核心点"></a><span id="jump6_1"/>（1）核心点</h3><p>这块内容又涉及到IMS了，又是一大块内容；<br>我们只需要记住几点：</p>
+<ul>
+<li>（1）WMS持有IMS</li>
+<li>（2）在ViewRootImpl.setView()时，会设置inputChannel给WMS</li>
+<li>（3）IMS开启两个Socket，用于和app进程通信，传递屏幕输入事件<ul>
+<li>IMS中InputReader是读屏幕事件的</li>
+<li>IMS中InputDispatcher负责将事件通过Socket传给app进程；</li>
+</ul>
+</li>
+</ul>
+<h3 id="（2）mWindowSession-addToDisplay-mInputChannel-设置输入监听"><a href="#（2）mWindowSession-addToDisplay-mInputChannel-设置输入监听" class="headerlink" title="（2）mWindowSession.addToDisplay(mInputChannel); 设置输入监听"></a><span id="jump6_2"/>（2）mWindowSession.addToDisplay(mInputChannel); 设置输入监听</h3><p>在上边window.addView(decor)方法中，第一步创建了Window，并且添加decor到Window上了；<br>下一步root.setView()</p>
+<ul>
+<li>开启绘制</li>
+<li>InputEventReceiver() 开启输入监听；</li>
+</ul>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_11.jpg" alt="image.png"></p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line">#ViewRootImpl.java</span><br><span class="line"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">setView</span><span class="params">(View view, WindowManager.LayoutParams attrs, View panelParentView,</span></span><br><span class="line"><span class="params">                    <span class="type">int</span> userId)</span> &#123;</span><br><span class="line">    <span class="comment">//开启绘制流程</span></span><br><span class="line">    <span class="keyword">synchronized</span> (<span class="built_in">this</span>) &#123;</span><br><span class="line">        ...</span><br><span class="line">        requestLayout();</span><br><span class="line">        <span class="comment">//创建输入事件监听channel</span></span><br><span class="line">        mInputChannel = <span class="keyword">new</span> <span class="title class_">InputChannel</span>();</span><br><span class="line">        <span class="comment">//通过WMS中转分发输入事件，WMS中持有InputManagerService对象；</span></span><br><span class="line">        res = mWindowSession.addToDisplay(mWindow, .. mInputChannel);</span><br><span class="line">        mInputEventReceiver = <span class="keyword">new</span> <span class="title class_">WindowInputEventReceiver</span>(mInputChannel,</span><br><span class="line">                            Looper.myLooper());</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="（3）InputManagerService输入事件socket与app进程通信"><a href="#（3）InputManagerService输入事件socket与app进程通信" class="headerlink" title="（3）InputManagerService输入事件socket与app进程通信"></a><span id="jump6_3"/>（3）InputManagerService输入事件socket与app进程通信</h3><p>以下是InputManagerService的工作流程图；<br>需要注意的是</p>
+<ul>
+<li><p>（1）InputReader: EventHub读取屏幕事件</p>
+<blockquote>
+<p>不断读取由EventHub监听到的input事件，将多个事件组合成一个可供上层消费的事件（比如将一组触摸事件合并成一个action_down事件），然后交给InputDispatcher进行事件分发；</p>
+</blockquote>
+</li>
+<li><p>（2）InputDispatcher: 通过Socket发送到app进程</p>
+<blockquote>
+<p>拿到InputReader获取的事件后，对事件进行包装，寻找并分发到目标窗口，对应inputChannel输入；</p>
+</blockquote>
+</li>
+</ul>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_12.jpg" alt="image.png"></p>
+<p>在WMS中持有InputManagerService实例，<br>所以通过wms中转，将Receiver设置给了IMS</p>
+<p>需要注意的是，在输入事件传递过程是通过Socket来通信的；</p>
+<p>（1）首先，通过openInputChannelPair来创建socket pair，作为InputChannel:</p>
+<ul>
+<li>socket服务端保存到system_server中的WindowState的mInputChannel；</li>
+<li>socket客户端通过binder传回到远程进程的UI主线程ViewRootImpl的mInputChannel；</li>
+</ul>
+<p>（2）紧接着，完成了两个线程的epoll监听工作：</p>
+<ul>
+<li>IMS.registerInputChannel(): “InputDispatcher”线程监听socket服务端，收到消息后回调InputDispatcher.handleReceiveCallback()；</li>
+<li>setFdEvents(): UI主线程监听socket客户端，收到消息后回调NativeInputEventReceiver.handleEvent().</li>
+</ul>
+<p>上边第4步openInputChannel()源码：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">#WindowState.java API <span class="number">26</span></span><br><span class="line"><span class="keyword">void</span> <span class="title function_">openInputChannel</span><span class="params">(InputChannel outInputChannel)</span> &#123;</span><br><span class="line">    <span class="comment">//1、根据WindowState的HashCode以及title来生成InputChannel名称</span></span><br><span class="line">    <span class="type">String</span> <span class="variable">name</span> <span class="operator">=</span> getName();</span><br><span class="line">    </span><br><span class="line">    <span class="comment">//2、创建一对InputChannel；native代码</span></span><br><span class="line">    InputChannel[] inputChannels = InputChannel.openInputChannelPair(name);</span><br><span class="line">    </span><br><span class="line">    <span class="comment">//3、socket服务端保存到WindowState的mInputChannel</span></span><br><span class="line">    mInputChannel = inputChannels[<span class="number">0</span>];</span><br><span class="line">    mClientChannel = inputChannels[<span class="number">1</span>];</span><br><span class="line">    </span><br><span class="line">    <span class="comment">//4、socket客户端传递给outInputChannel</span></span><br><span class="line">    mInputWindowHandle.inputChannel = inputChannels[<span class="number">0</span>];</span><br><span class="line">    mClientChannel.transferTo(outInputChannel);</span><br><span class="line">    </span><br><span class="line">    <span class="comment">//5、用socket服务端作为参数</span></span><br><span class="line">    mService.mInputManager.registerInputChannel(mInputChannel, mInputWindowHandle);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>inputChannels数组：</p>
+<ul>
+<li><p>inputChannels[0]所对应的InputChannel名称的后缀为(server);</p>
+<ul>
+<li>服务端：保存到WindowState的mInputChannel；</li>
+</ul>
+</li>
+<li><p>inputChannels[1]所对应的InputChannel名称的后缀为(client)；</p>
+<ul>
+<li>客户端：最终传递给ViewRootImpl的mInputChannel</li>
+</ul>
+</li>
+<li><p>注意这里的服务端、客户端，是指两个Socket，分别用于</p>
+<ul>
+<li>IMS接收app数据</li>
+<li>App进程接收IMS数据</li>
+</ul>
+</li>
+</ul>
+<p>IMS的输入事件最终会发送到ViewRootImpl的WindowInputEventReceiver中去；</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">WindowInputEventReceiver</span> <span class="keyword">extends</span> <span class="title class_">InputEventReceiver</span> &#123;</span><br><span class="line">        <span class="comment">//构造方法，接受inputchannel输入事件</span></span><br><span class="line">         <span class="keyword">public</span> <span class="title function_">WindowInputEventReceiver</span><span class="params">(InputChannel inputChannel, Looper looper)</span> &#123;</span><br><span class="line">             <span class="built_in">super</span>(inputChannel, looper);</span><br><span class="line">         &#125;</span><br><span class="line"> </span><br><span class="line">         <span class="meta">@Override</span></span><br><span class="line">         <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">onInputEvent</span><span class="params">(InputEvent event)</span> &#123;</span><br><span class="line">            ...</span><br><span class="line">             <span class="keyword">if</span> (processedEvents != <span class="literal">null</span>) &#123;</span><br><span class="line">                 <span class="keyword">if</span> (processedEvents.isEmpty()) &#123;</span><br><span class="line">                     <span class="comment">// InputEvent consumed by mInputCompatProcessor</span></span><br><span class="line">                     finishInputEvent(event, <span class="literal">true</span>);</span><br><span class="line">                 &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">                     <span class="keyword">for</span> (<span class="type">int</span> <span class="variable">i</span> <span class="operator">=</span> <span class="number">0</span>; i &lt; processedEvents.size(); i++) &#123;</span><br><span class="line">                        <span class="comment">//对输入事件进行分发</span></span><br><span class="line">                         enqueueInputEvent(</span><br><span class="line">                                 processedEvents.get(i), <span class="built_in">this</span>,</span><br><span class="line">                                 QueuedInputEvent.FLAG_MODIFIED_FOR_COMPATIBILITY, <span class="literal">true</span>);</span><br><span class="line">                     &#125;</span><br><span class="line">                 &#125;</span><br><span class="line">             &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">                 enqueueInputEvent(event, <span class="built_in">this</span>, <span class="number">0</span>, <span class="literal">true</span>);</span><br><span class="line">             &#125;</span><br><span class="line">         &#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="七、总结：AMS-WMS-看Activity启动"><a href="#七、总结：AMS-WMS-看Activity启动" class="headerlink" title="七、总结：AMS&#x2F;WMS 看Activity启动"></a><span id="jump7"/>七、总结：AMS&#x2F;WMS 看Activity启动</h2><p>Activity的启动过程同时贯穿着AMS&#x2F;WMS相关信息的创建，本文从Window角度来看待整个过程：</p>
+<p>第一阶段运行在system_server进程：</p>
+<ol>
+<li>将Window相应task移至顶部,并创建AppWindowToken对象，添加到WMS.mTokenMap记录该信息；</li>
+<li>发送消息到”android.display”线程来处理ADD_STARTING启动窗口的消息。</li>
+</ol>
+<p>第二阶段运行在目标进程的主线程：(当然在该阶段有些方法会Binder call到system_server进程)</p>
+<ol>
+<li>创建获取AMS的binder代理；</li>
+<li>执行performLaunchActivity过程，创建如下对象：<ul>
+<li>创建LoadedApk对象;</li>
+<li>创建ComponentName对象;</li>
+<li>创建目标Activity对象;</li>
+<li>创建Application对象;</li>
+</ul>
+</li>
+<li>创建完Activity，执行attach操作,初始化成员变量：<ul>
+<li>mWindow：数据类型为PhoneWindow，继承于Window对象；</li>
+<li>mWindowManager：数据类型为WindowManagerImpl，实现WindowManager接口;</li>
+<li>mToken：远程ActivityRecord的appToken的代理端</li>
+</ul>
+</li>
+<li>执行performResumeActivity过程；<ul>
+<li>回调onResume()方法；</li>
+</ul>
+</li>
+<li>执行addView过程：<ul>
+<li>创建ViewRootImpl对象；</li>
+<li>创建WMS端的Session的代理对象；</li>
+<li>创建继承于IWindow.Stub的ViewRootImpl.W对象；</li>
+<li>执行setView()添加视图到WMS；</li>
+<li>在WMS中创建WindowState对象；</li>
+<li>监听InputManagerService输入事件，分发到view中去；</li>
+<li>updateFocusedWindowLocked来更新聚焦窗口情况。</li>
+</ul>
+</li>
+</ol>
+<p><a target="_blank" rel="noopener" href="https://zhuanlan.zhihu.com/p/571567543">https://zhuanlan.zhihu.com/p/571567543</a></p>
+<p><a target="_blank" rel="noopener" href="https://www.jianshu.com/u/167b54662111">https://www.jianshu.com/u/167b54662111</a></p>
+<p><a target="_blank" rel="noopener" href="https://www.jianshu.com/p/18cbc862ba7b">https://www.jianshu.com/p/18cbc862ba7b</a></p>
+<p><a target="_blank" rel="noopener" href="https://www.midfang.com/android-window-suspension-view/">https://www.midfang.com/android-window-suspension-view/</a></p>
+<p><a target="_blank" rel="noopener" href="https://yuanfentiank789.github.io/2017/04/24/windowtype/">https://yuanfentiank789.github.io/2017/04/24/windowtype/</a></p>
+<ul>
+<li>1、window 和 Activity 和 Decorview关系？</li>
+<li>2、dispatch onintercpt touch requestAllowIntercept 关系  、和onclick事件的关系</li>
+<li>3、WindowManger  系统、应用级别   WindowManager.LayoutParams flag含义</li>
+</ul>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a href="https://irving18.github.io">王征</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://irving18.github.io/2024/07/19/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B/">https://irving18.github.io/2024/07/19/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)4%EF%BC%9AWMS%E8%A7%92%E5%BA%A6%E7%9C%8BActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://irving18.github.io" target="_blank">Android高级直通车</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/Android%E8%BF%9B%E9%98%B6/">Android进阶</a><a class="post-meta__tags" href="/tags/Framework/">Framework</a><a class="post-meta__tags" href="/tags/%E7%B3%BB%E7%BB%9F%E6%9C%8D%E5%8A%A1/">系统服务</a><a class="post-meta__tags" href="/tags/WMS/">WMS</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,twitter,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc/sharejs/dist/js/social-share.min.js" defer></script></div></div><div class="post-reward"><div class="reward-button"><i class="fas fa-qrcode"></i>赞助</div><div class="reward-main"><ul class="reward-all"><li class="reward-item"><a href="/img/wechat_pay.png" target="_blank"><img class="post-qr-code-img" src="/img/wechat_pay.png" alt="wechat"/></a><div class="post-qr-code-desc">wechat</div></li></ul></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2024/07/20/Framework%E7%B3%BB%E7%BB%9F%E7%AF%875-InputManagerService(IMS)%EF%BC%9A%E5%B1%8F%E5%B9%95%E4%BA%8B%E4%BB%B6%E8%BE%93%E5%85%A5/" title="Framework系统篇5-InputManagerService(IMS)：屏幕事件输入"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">Framework系统篇5-InputManagerService(IMS)：屏幕事件输入</div></div><div class="info-2"><div class="info-item-1">目录 一、整体介绍 （1）完整流程图 （2）设备文件dev&#x2F;event、三个核心类、三个队列的关系   二、IMS启动-&gt;事件处理过程 （1）完整介绍 （2）源码介绍   三、InputReader线程 四、InputDispatcher线程 五、UI线程 六、事件处理过程 （1）整体框架图 （2）交互过程   七、Interview （1）为什么InputDispatcher和应用app通信采用Socket，而不是Binder？ （2）为什么InputDispatcher要先处理数据放到outboundQueue，再取出来处理完放到waitQueue中？ （3）简述Input系统？   参考链接 gityuan...</div></div></div></a><a class="pagination-related" href="/2024/07/18/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)3%EF%BC%9A%E5%90%AF%E5%8A%A8%E7%AA%97%E5%8F%A3/" title="Framework系统篇4-WindowManagerService(WMS)3：启动窗口"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)3：启动窗口</div></div><div class="info-2"><div class="info-item-1">[toc] https://gityuan.com/2017/01/15/wms_starting_window/ 一、捋清一些概念（1）Activity、window、WindowState、windowToken、IApplicationToken的关系？1、IApplicationToken是进程独有的 在AMS启动Activity时startProcessLocked()，创建进程后attachApplication()时传给AMS的 是个Binder对象，用来跨进程通信的 会被存储在ActivityRecord.appToken中；  2、Activity和windowToken是一对多的 主窗口和 Activity：对于每个 Activity，当它的主窗口创建时，会有一个与该 Activity 相关的 windowToken。这个 windowToken 可以被认为与 Activity 一一对应，因为每个 Activity 的主窗口有且只有一个 windowToken。  子窗口（如 Dialog、PopupWindow 等）：一个 Activity...</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2024/07/16/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)2%EF%BC%9A%E5%90%AF%E5%8A%A8%E7%AF%87/" title="Framework系统篇4-WindowManagerService(WMS)2：启动篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-16</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)2：启动篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、概述（1）WMS、Surface、SurfaceFlinger关系WMS核心关系：  Surface: 代表画布 WMS: 添加window的过程主要功能是添加Surface,管理所有的Surface布局,以及Z轴排序问题; SurfaceFinger: 将Surface按次序混合并显示到物理屏幕上;  （2）WMS整体认识  一、WMS端： WMS继承于IWindowManager.Stub, 作为Binder服务端; WMS的成员变量mSessions保存着所有的Session对象,Session继承于IWindowSession.Stub, 作为Binder服务端; 成员变量mPolicy: 实例对象为PhoneWindowManager,用于实现各种窗口相关的策略; 成员变量mChoreographer: 用于控制窗口动画,屏幕旋转等操作; 成员变量mDisplayContents: 记录一组DisplayContent对象,这个跟多屏输出相关; 成员变量mTokenMap: 保存所有的WindowToken对象;...</div></div></div></a><a class="pagination-related" href="/2024/07/14/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)1%EF%BC%9A%E6%95%B4%E4%BD%93%E8%AE%A4%E8%AF%86+%E6%A6%82%E5%BF%B5/" title="Framework系统篇4-WindowManagerService(WMS)1：整体认识+概念"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-14</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)1：整体认识+概念</div></div><div class="info-2"><div class="info-item-1">[toc] 一、WMS作用的整体认知  1、首先WMS在启动之后会设置给AMS，也就是AMS会持有WMS的实例，方便后续调用 2、WMS内部 通过WindowManager管理WindowState，即Window的状态等； 通过WindowAnimator处理动画   3、和InputManagerService进行交互，处理输入事件dispatchTouchEvent() 分发触摸事件 4、通过SurfaceControl去SurfaceFlinger中申请Surface空间，将Surface返回给App进程，并管理Surface画布，通过Z轴混合后上帧给SurfaceFlinger进行渲染；  二、WMS中成员变量的作用 一、WMS端： WMS继承于IWindowManager.Stub, 作为Binder服务端; WMS的成员变量mSessions保存着所有的Session对象,Session继承于IWindowSession.Stub, 作为Binder服务端; 成员变量mPolicy:...</div></div></div></a><a class="pagination-related" href="/2024/07/18/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)3%EF%BC%9A%E5%90%AF%E5%8A%A8%E7%AA%97%E5%8F%A3/" title="Framework系统篇4-WindowManagerService(WMS)3：启动窗口"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-18</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)3：启动窗口</div></div><div class="info-2"><div class="info-item-1">[toc] https://gityuan.com/2017/01/15/wms_starting_window/ 一、捋清一些概念（1）Activity、window、WindowState、windowToken、IApplicationToken的关系？1、IApplicationToken是进程独有的 在AMS启动Activity时startProcessLocked()，创建进程后attachApplication()时传给AMS的 是个Binder对象，用来跨进程通信的 会被存储在ActivityRecord.appToken中；  2、Activity和windowToken是一对多的 主窗口和 Activity：对于每个 Activity，当它的主窗口创建时，会有一个与该 Activity 相关的 windowToken。这个 windowToken 可以被认为与 Activity 一一对应，因为每个 Activity 的主窗口有且只有一个 windowToken。  子窗口（如 Dialog、PopupWindow 等）：一个 Activity...</div></div></div></a><a class="pagination-related" href="/2024/07/12/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)%EF%BC%9AWindow%E7%9A%84%E4%BD%BF%E7%94%A8%E7%AF%87/" title="Framework系统篇4-WindowManagerService(WMS)：Window的使用篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-12</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)：Window的使用篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、Window和WindowManager、WMS的关系 window:它是一个抽象类，具体实现类为 PhoneWindow ，它对 View 进行管理。Window是View的容器，View是Window的具体表现内容； windowManager:是一个接口类，继承自接口 ViewManager ，从它的名称就知道它是用来管理 Window 的，它的实现类为 WindowManagerImpl； WMS:是窗口的管理者，它负责窗口的启动、添加和删除。另外窗口的大小和层级也是由它进行管理的；   二、Window的分类：LayoutParams.type 属性    分类 说明 是否需要权限    Application Window(应用窗口) 例如Activity；【取值范围为1~99】 -   Sub Window(子窗口) 不能独立存在，需要依附在其他窗口，例如PopupWindow，Dialog【取值范围为1000~1999】 -   System...</div></div></div></a><a class="pagination-related" href="/2024/07/08/Framework%E7%B3%BB%E7%BB%9F%E7%AF%871-Android%E7%B3%BB%E7%BB%9F%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B/" title="Framework系统篇1-Android系统启动流程"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-08</div><div class="info-item-2">Framework系统篇1-Android系统启动流程</div></div><div class="info-2"><div class="info-item-1">[toc]                                            一、系统启动入口 简图中我们关注的重点：  1、core、main、late-start三种类型任务 2、与AMS类似的系统进程是通过servicemanager来获取IBinder对象，从而得到BpBinder，进而通过binder来通信的 3、普通应用间，是通过Service组件，来获取IBinder对象，从而得到BpBinder，进程通过binder来通信的；    &#x2F;system&#x2F;core&#x2F;init&#x2F;init.cpp&#x2F;system&#x2F;core&#x2F;rootdir&#x2F;init.rc  （一）init.rc：标识core、main、late_start类型服务 12345678910111213141516#6.0以前的源码//1、Linux以服务形式启动ServiceManagerservice servicemanager /system/bin/servicemanager   ...</div></div></div></a><a class="pagination-related" href="/2024/07/09/Framework%E7%B3%BB%E7%BB%9F%E7%AF%872-ActivityManagerService(AMS)%E5%90%AF%E5%8A%A8%E7%AF%87/" title="Framework系统篇2-ActivityManagerService(AMS)启动篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-09</div><div class="info-item-2">Framework系统篇2-ActivityManagerService(AMS)启动篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、前述在【Fw-系统启动流程】中已经知道，SystemServer进程的run()方法：  1、startBootstrapServices(); 启动引导服务：AMS、PMS、PowerManagerServic 2、startCoreServices(); 启动核心服务：BatteryService 3、startOtherServices(); 启动其他服务：如WMS  这其中还会调用startBootPhase() 方法，  1、传入不同的phase [feɪz]...</div></div></div></a></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">王征</div><div class="author-info-description"></div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">41</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">18</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">3</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/IRVING18"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="mailto:ivring18@163.com" target="_blank" title="Email"><i class="fas fa-envelope" style="color: #4a7dbe;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content"><span>Android开发者迈向<span style="color:red; weight:bold" >高级Android开发</span>的直通车，总结了各大面试考点！<span></br><span>一个通人性的博主，码字不易，用爱发电。希望大家多多支持。</span><img width="250px" src="/img/wechat_pay.png"></div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#%E7%9B%AE%E5%BD%95"><span class="toc-number">1.</span> <span class="toc-text">目录</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E3%80%81%E5%BC%95%E8%A8%80"><span class="toc-number">1.1.</span> <span class="toc-text">一、引言</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%8C%E3%80%81ViewRootImpl%E5%92%8CWindow%E3%80%81WindowManagerGlobal%E4%B9%8B%E9%97%B4%E7%9A%84%E5%85%B3%E7%B3%BB"><span class="toc-number">1.2.</span> <span class="toc-text">二、ViewRootImpl和Window、WindowManagerGlobal之间的关系</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%89%E3%80%81Window"><span class="toc-number">1.3.</span> <span class="toc-text">三、Window</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%881%EF%BC%89Window%E5%92%8CWindowManager%E3%80%81WMS%E7%9A%84%E5%85%B3%E7%B3%BB"><span class="toc-number">1.3.1.</span> <span class="toc-text">（1）Window和WindowManager、WMS的关系</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%882%EF%BC%89Window%E7%9A%84%E5%88%86%E7%B1%BB"><span class="toc-number">1.3.2.</span> <span class="toc-text">（2）Window的分类</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#1%E3%80%81Application-Window-%E5%BA%94%E7%94%A8%E7%AA%97%E5%8F%A3"><span class="toc-number">1.3.2.1.</span> <span class="toc-text">1、Application Window(应用窗口)</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#2%E3%80%81Sub-Window-%E5%AD%90%E7%AA%97%E5%8F%A3"><span class="toc-number">1.3.2.2.</span> <span class="toc-text">2、Sub Window(子窗口)</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#3%E3%80%81System-Window-%E7%B3%BB%E7%BB%9F%E7%AA%97%E5%8F%A3"><span class="toc-number">1.3.2.3.</span> <span class="toc-text">3、System Window(系统窗口)</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%883%EF%BC%89Window%E7%9B%B8%E5%85%B3%E6%A0%87%E8%AF%86"><span class="toc-number">1.3.3.</span> <span class="toc-text">（3）Window相关标识</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%9B%9B%E3%80%81WindowManager"><span class="toc-number">1.4.</span> <span class="toc-text">四、WindowManager</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%881%EF%BC%89addView"><span class="toc-number">1.4.1.</span> <span class="toc-text">（1）addView()</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%882%EF%BC%89removeView"><span class="toc-number">1.4.2.</span> <span class="toc-text">（2）removeView()</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%94%E3%80%81WMS%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86"><span class="toc-number">1.5.</span> <span class="toc-text">五、WMS工作原理</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%881%EF%BC%89addWindow-%E8%BF%87%E7%A8%8B"><span class="toc-number">1.5.1.</span> <span class="toc-text">（1）addWindow() 过程</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%882%EF%BC%89removeWindow"><span class="toc-number">1.5.2.</span> <span class="toc-text">（2）removeWindow()</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AD%E3%80%81%E8%BE%93%E5%85%A5%E4%BA%8B%E4%BB%B6%E6%B4%BE%E5%8F%91"><span class="toc-number">1.6.</span> <span class="toc-text">六、输入事件派发</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%881%EF%BC%89%E6%A0%B8%E5%BF%83%E7%82%B9"><span class="toc-number">1.6.1.</span> <span class="toc-text">（1）核心点</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%882%EF%BC%89mWindowSession-addToDisplay-mInputChannel-%E8%AE%BE%E7%BD%AE%E8%BE%93%E5%85%A5%E7%9B%91%E5%90%AC"><span class="toc-number">1.6.2.</span> <span class="toc-text">（2）mWindowSession.addToDisplay(mInputChannel); 设置输入监听</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%883%EF%BC%89InputManagerService%E8%BE%93%E5%85%A5%E4%BA%8B%E4%BB%B6socket%E4%B8%8Eapp%E8%BF%9B%E7%A8%8B%E9%80%9A%E4%BF%A1"><span class="toc-number">1.6.3.</span> <span class="toc-text">（3）InputManagerService输入事件socket与app进程通信</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%83%E3%80%81%E6%80%BB%E7%BB%93%EF%BC%9AAMS-WMS-%E7%9C%8BActivity%E5%90%AF%E5%8A%A8"><span class="toc-number">1.7.</span> <span class="toc-text">七、总结：AMS&#x2F;WMS 看Activity启动</span></a></li></ol></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/20/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service%EF%BC%9AstartService%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-Service：startService源码分析">Framework四大组件篇-Service：startService源码分析</a><time datetime="2024-09-20T07:40:47.000Z" title="发表于 2024-09-20 15:40:47">2024-09-20</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/17/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service%EF%BC%9AbindService%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-Service：bindService源码分析">Framework四大组件篇-Service：bindService源码分析</a><time datetime="2024-09-17T07:40:36.000Z" title="发表于 2024-09-17 15:40:36">2024-09-17</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/16/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service1%E4%BD%BF%E7%94%A8%E7%AF%87/" title="Framework四大组件篇-Service1使用篇">Framework四大组件篇-Service1使用篇</a><time datetime="2024-09-16T07:40:35.000Z" title="发表于 2024-09-16 15:40:35">2024-09-16</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/07/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-ContentProvider%E5%90%AF%E5%8A%A8%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-ContentProvider启动源码分析">Framework四大组件篇-ContentProvider启动源码分析</a><time datetime="2024-09-07T07:39:36.000Z" title="发表于 2024-09-07 15:39:36">2024-09-07</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/08/30/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-BroadCast%E5%8E%9F%E7%90%86%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-BroadCast原理源码分析">Framework四大组件篇-BroadCast原理源码分析</a><time datetime="2024-08-30T07:40:05.000Z" title="发表于 2024-08-30 15:40:05">2024-08-30</time></div></div></div></div></div></div></main><footer id="footer" style="background-image: url(/img/bg.png);"><div id="footer-wrap"><div class="copyright">&copy;2024 By 王征</div><div class="footer_custom_text"><a href=""><img class="icp-icon" src="/img/avatar.jpg"><span>一个通人性的博主</span></a></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js"></script><script src="/js/main.js"></script><div class="js-pjax"></div><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></div></body></html>

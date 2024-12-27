@@ -1,0 +1,943 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="light"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>Framework开篇1-Binder机制：驱动篇&amp;ServiceManager启动流程 | Android高级直通车</title><meta name="author" content="王征"><meta name="copyright" content="王征"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="ffffff"><meta name="description" content="目录 一、简单介绍Linux IPC进程通讯方式  1、分类 2、管道、消息队列 3、mmap Binder优势   二、Binder 架构 1、整体架构 2、C&#x2F;S模型   三、Binder驱动 1、驱动代码、启动概述 ① binder_init函数 ② bmisc_register(&amp;binder_miscdev);向Linux内核注册binder设备：open、mmap、i">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Framework开篇1-Binder机制：驱动篇&amp;ServiceManager启动流程">
+<meta property="og:url" content="https://irving18.github.io/2024/07/01/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B/index.html">
+<meta property="og:site_name" content="Android高级直通车">
+<meta property="og:description" content="目录 一、简单介绍Linux IPC进程通讯方式  1、分类 2、管道、消息队列 3、mmap Binder优势   二、Binder 架构 1、整体架构 2、C&#x2F;S模型   三、Binder驱动 1、驱动代码、启动概述 ① binder_init函数 ② bmisc_register(&amp;binder_miscdev);向Linux内核注册binder设备：open、mmap、i">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://irving18.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2024-07-01T07:39:09.000Z">
+<meta property="article:modified_time" content="2024-12-27T09:03:41.198Z">
+<meta property="article:author" content="王征">
+<meta property="article:tag" content="Android进阶">
+<meta property="article:tag" content="Framework">
+<meta property="article:tag" content="Binder机制">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://irving18.github.io/img/avatar.jpg"><link rel="shortcut icon" href="/img/avatar.jpg"><link rel="canonical" href="https://irving18.github.io/2024/07/01/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&amp;ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', 'ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: undefined,
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":true},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyload: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: 'Framework开篇1-Binder机制：驱动篇&ServiceManager启动流程',
+  isPost: true,
+  isHome: false,
+  isHighlightShrink: false,
+  isToc: true,
+  isShuoshuo: false
+}</script><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="onerror=null;src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">41</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">18</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">3</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 文章</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg" id="page-header" style="background-image: url(/img/bg.png);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">Android高级直通车</span></a><a class="nav-page-title" href="/"><span class="site-name">Framework开篇1-Binder机制：驱动篇&amp;ServiceManager启动流程</span></a></span><div id="menus"><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 文章</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">Framework开篇1-Binder机制：驱动篇&amp;ServiceManager启动流程</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2024-07-01T07:39:09.000Z" title="发表于 2024-07-01 15:39:09">2024-07-01</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2024-12-27T09:03:41.198Z" title="更新于 2024-12-27 17:03:41">2024-12-27</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/Android%E8%BF%9B%E9%98%B6/">Android进阶</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">7.8k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>29分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h1 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h1><ul>
+<li><a href="#jump1">一、简单介绍Linux IPC进程通讯方式 </a><ul>
+<li><a href="#jump1_1">1、分类</a></li>
+<li><a href="#jump1_2">2、管道、消息队列</a></li>
+<li><a href="#jump1_3">3、mmap</a></li>
+<li><a href="#jump1_4">Binder优势</a></li>
+</ul>
+</li>
+<li><a href="#jump2">二、Binder 架构</a><ul>
+<li><a href="#jump2_1">1、整体架构</a></li>
+<li><a href="#jump2_2">2、C&#x2F;S模型</a></li>
+</ul>
+</li>
+<li><a href="#jump3">三、Binder驱动</a><ul>
+<li><a href="#jump3_1">1、驱动代码、启动概述</a><ul>
+<li><a href="#jump3_1_1">① binder_init函数</a></li>
+<li><a href="#jump3_1_2">② bmisc_register(&amp;binder_miscdev);向Linux内核注册binder设备：open、mmap、ioctl</a></li>
+</ul>
+</li>
+<li><a href="#jump3_2">2、驱动主要结构</a><ul>
+<li><a href="#jump3_2_1"> ① 与用户空间共用的，用于通信</a></li>
+<li><a href="#jump3_2_2"> ② Binder驱动内部实现过程中需要的</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#jump5">四、BInder通信</a><ul>
+<li><a href="#jump5_2">1、BInder协议</a><ul>
+<li><a href="#jump5_2_1"> ① 控制类协议：如注册成ServiceManager</a></li>
+<li><a href="#jump5_2_2"> ② 驱动类协议：BC&#x2F;BR</a></li>
+</ul>
+</li>
+<li><a href="#jump5_1">2、BInder通信过程</a></li>
+</ul>
+</li>
+<li><a href="#jump6">五、open_driver()打开驱动过程</a><ul>
+<li><a href="#jump6_1">1、打开BInder设备</a></li>
+<li><a href="#jump6_2">2、mmap内存映射</a></li>
+<li><a href="#jump6_3">3、内存的管理</a></li>
+<li><a href="#jump6_4">4、驱动层线程管理</a></li>
+</ul>
+</li>
+<li><a href="#jump7">六、Binder中的“面向对象”</a></li>
+<li><a href="#jump9">七、ServiceManager注册、获取</a></li>
+<li><a href="#jump8">八、ServiceManager完整启动流程</a><ul>
+<li><a href="#jump8_1">1、init.cpp、init.rc启动ServiceManager</a><ul>
+<li><a href="#jump8_1_1">（一）init.rc：标识core、main、late_start类型服务</a></li>
+<li><a href="#jump8_1_2">（二）init.cpp：执行顺序core &gt; main &gt; late_start</a></li>
+</ul>
+</li>
+<li><a href="#jump8_2">2、ServiceManager主函数</a></li>
+<li><a href="#jump8_2">3、svcinfo结构体，存储注册进来的Binder服务的实体</a></li>
+<li><a href="#jump8_3">4、ServiceManager进程的特殊性：defaultServiceManager</a></li>
+</ul>
+</li>
+</ul>
+<h2 id="一、简单介绍Linux-IPC进程通讯方式"><a href="#一、简单介绍Linux-IPC进程通讯方式" class="headerlink" title="一、简单介绍Linux IPC进程通讯方式"></a><span id="jump1">一、简单介绍Linux IPC进程通讯方式</span></h2><h3 id="1、分类"><a href="#1、分类" class="headerlink" title="1、分类"></a><span id="jump1_1">1、分类</span></h3><table>
+<thead>
+<tr>
+<th>分类</th>
+<th>说明</th>
+<th>补充</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>共享内存</td>
+<td>0次拷贝，但是存在操作并发问题</td>
+<td>存在并发问题</td>
+</tr>
+<tr>
+<td>Socket</td>
+<td>走网络协议，2次拷贝</td>
+<td>1、ip地址是对外的，有一定安全风险<p>2、开销相对大，传输慢</td>
+</tr>
+<tr>
+<td>管道、消息队列</td>
+<td>2次拷贝<p>copy - from_user() 从用户进程空间到内核空间<p>copy -  to_user()从内核空间到用户空间</td>
+<td></td>
+</tr>
+<tr>
+<td>Binder</td>
+<td>1次拷贝，利用Memory Map （mmap）</td>
+<td></td>
+</tr>
+</tbody></table>
+<h3 id="2、管道、消息队列"><a href="#2、管道、消息队列" class="headerlink" title="2、管道、消息队列"></a><span id="jump1_2">2、管道、消息队列</span></h3><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_1.jpg" alt="img"></p>
+<h3 id="3、mmap"><a href="#3、mmap" class="headerlink" title="3、mmap"></a><span id="jump1_3">3、mmap</span></h3><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_2.jpg" alt="img"></p>
+<p>mmap，提供一块虚拟地址空间来接收事务。</p>
+<p>它可以将文件直接映射到进程的地址空间(虚拟内存)。实现了文件和虚拟内存地址一一映射的关系.在完成映射后，进程就可以使用指针直接读写文件，而系统会自动回写被修改过得脏页到磁盘对应位置。</p>
+<p>mmap 在完成了 read、write 相同效果的同时不仅省去了内核到进程的内存拷贝过程，而且还可以实现数据的共享操作：</p>
+<p>一个文件可以同时被多个进程、内核映射，如果映射的文件被内核或其他进程修改，那么最终的结果也会反映到映射当中。</p>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_3.jpg" alt="img"></p>
+<h3 id="Binder的优势"><a href="#Binder的优势" class="headerlink" title="Binder的优势"></a><span id="jump1_4">Binder的优势</span></h3><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_4.jpg" alt="img"></p>
+<ul>
+<li>1、Binder本身是C&#x2F;S架构的，这一点更符合Android系统的架构</li>
+<li>2、性能上更有优势：管道，消息队列，Socket的通讯都需要两次数据拷贝，而Binder只需要一次。要知道，对于系统底层的IPC形式，少一次数据拷贝，对整体性能的影响是非常之大的</li>
+<li>3、安全性更好：传统IPC形式，无法得到对方的身份标识（UID&#x2F;GID)，而在使用Binder IPC时，这些身份标示是跟随调用过程而自动传递的。Server端很容易就可以知道Client端的身份，非常便于做安全检查</li>
+</ul>
+<h2 id="二、Binder-架构"><a href="#二、Binder-架构" class="headerlink" title="二、Binder 架构"></a><span id="jump2">二、Binder 架构</span></h2><h3 id="1、整体架构"><a href="#1、整体架构" class="headerlink" title="1、整体架构"></a><span id="jump2_1">1、整体架构</span></h3><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_5.jpg" alt="image.png"></p>
+<ul>
+<li>Framework层<ul>
+<li>Java部分</li>
+<li>JNI部分</li>
+<li>C++部分</li>
+</ul>
+</li>
+<li>驱动层<ul>
+<li>驱动层位于Linux内核中，它提供了最底层的数据传递，对象标识，线程管理，调用过程控制等功能。驱动层是整个Binder机制的核心。</li>
+</ul>
+</li>
+</ul>
+<h3 id="2、C-S模型"><a href="#2、C-S模型" class="headerlink" title="2、C&#x2F;S模型"></a><span id="jump2_2">2、C&#x2F;S模型</span></h3><ul>
+<li>Client 客户端</li>
+<li>Server 服务端</li>
+<li>ServiceManager：用于管理系统中的各种服务</li>
+<li>binder驱动</li>
+</ul>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_6.jpg" alt="img"></p>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_7.jpg" alt="img"></p>
+<p>图中Client&#x2F;Server&#x2F;ServiceManage之间的相互通信<span style="color:red;">都是基于Binder机制</span>。既然基于Binder机制通信，那么同样也是C&#x2F;S架构，则图中的3大步骤都有相应的Client端与Server端。</p>
+<ul>
+<li>**注册服务(addService)**：Server进程要先注册Service到ServiceManager。该过程：Server是客户端，ServiceManager是服务端。系统服务是系统启动时注册进去的，不需要我们手动操作；</li>
+<li>**获取服务(getService)**：Client进程使用某个Service前，须先向ServiceManager中获取相应的Service。该过程：Client是客户端，ServiceManager是服务端。</li>
+<li><strong>使用服务</strong>：Client根据得到的Service信息建立与Service所在的Server进程通信的通路，然后就可以直接与Service交互。该过程：client是客户端，server是服务端。</li>
+</ul>
+<h2 id="三、Binder驱动"><a href="#三、Binder驱动" class="headerlink" title="三、Binder驱动"></a><span id="jump3">三、Binder驱动</span></h2><h3 id="1、驱动代码、启动概述"><a href="#1、驱动代码、启动概述" class="headerlink" title="1、驱动代码、启动概述"></a><span id="jump3_1">1、驱动代码、启动概述</span></h3><p>源码路径（这部分代码不在AOSP中，而是位于Linux内核代码中）：</p>
+<blockquote>
+<p>&#x2F;kernel&#x2F;drivers&#x2F;android&#x2F;binder.c<br>&#x2F;kernel&#x2F;include&#x2F;uapi&#x2F;linux&#x2F;android&#x2F;binder.h</p>
+</blockquote>
+<p>or</p>
+<blockquote>
+<p>&#x2F;kernel&#x2F;drivers&#x2F;staging&#x2F;android&#x2F;binder.c<br>&#x2F;kernel&#x2F;drivers&#x2F;staging&#x2F;android&#x2F;uapi&#x2F;binder.h</p>
+</blockquote>
+<p>Binder是一个 <strong>miscellaneous</strong> 类型的驱动，本身不对应任何硬件，所有的操作都在软件层。</p>
+<h4 id="①-binder-init函数"><a href="#①-binder-init函数" class="headerlink" title=" ① binder_init函数"></a><span id="jump3_1_1"> ① binder_init函数</h4><p>负责Binder驱动的初始化工作，该函数中大部分代码是在通过</p>
+<ul>
+<li>debugfs_create_dir和</li>
+<li>debugfs_create_file函数</li>
+</ul>
+<p>来创建debugfs对应的文件。</p>
+<blockquote>
+<p>如果内核在编译时打开了debugfs，则通过adb shell连上设备之后，可以在设备的这个路径找到debugfs对应的文件：&#x2F;sys&#x2F;kernel&#x2F;debug。Binder驱动中创建的debug文件如下所示：</p>
+</blockquote>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta"># ls -l /sys/kernel/debug/binder/</span></span><br><span class="line">total <span class="number">0</span></span><br><span class="line">-r--r--r-- <span class="number">1</span> root root <span class="number">0</span> <span class="number">1970</span><span class="number">-01</span><span class="number">-01</span> <span class="number">00</span>:<span class="number">00</span> failed_transaction_log</span><br><span class="line">drwxr-xr-x <span class="number">2</span> root root <span class="number">0</span> <span class="number">1970</span><span class="number">-05</span><span class="number">-09</span> <span class="number">01</span>:<span class="number">19</span> proc</span><br><span class="line">-r--r--r-- <span class="number">1</span> root root <span class="number">0</span> <span class="number">1970</span><span class="number">-01</span><span class="number">-01</span> <span class="number">00</span>:<span class="number">00</span> state</span><br><span class="line">-r--r--r-- <span class="number">1</span> root root <span class="number">0</span> <span class="number">1970</span><span class="number">-01</span><span class="number">-01</span> <span class="number">00</span>:<span class="number">00</span> stats</span><br><span class="line">-r--r--r-- <span class="number">1</span> root root <span class="number">0</span> <span class="number">1970</span><span class="number">-01</span><span class="number">-01</span> <span class="number">00</span>:<span class="number">00</span> transaction_log</span><br><span class="line">-r--r--r-- <span class="number">1</span> root root <span class="number">0</span> <span class="number">1970</span><span class="number">-01</span><span class="number">-01</span> <span class="number">00</span>:<span class="number">00</span> transactions</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>这些文件其实都在内存中的，实时的反应了当前Binder的使用情况，在实际的开发过程中，这些信息可以帮忙分析问题。例如，可以通过查看&#x2F;sys&#x2F;kernel&#x2F;debug&#x2F;binder&#x2F;proc目录来确定哪些进程正在使用Binder，通过查看transaction_log和transactions文件来确定Binder通信的数据。</p>
+</blockquote>
+<h4 id="②-bmisc-register-binder-miscdev-向Linux内核注册binder设备：open、mmap、ioctl"><a href="#②-bmisc-register-binder-miscdev-向Linux内核注册binder设备：open、mmap、ioctl" class="headerlink" title=" ② bmisc_register(&amp;binder_miscdev);向Linux内核注册binder设备：open、mmap、ioctl"></a><span id="jump3_1_2"> ② bmisc_register(&amp;binder_miscdev);向Linux内核注册binder设备：open、mmap、ioctl</span></h4><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="type">static</span> <span class="class"><span class="keyword">struct</span> <span class="title">miscdevice</span> <span class="title">binder_miscdev</span> =</span> &#123;</span><br><span class="line">	.minor = MISC_DYNAMIC_MINOR,</span><br><span class="line">	.name = <span class="string">&quot;binder&quot;</span>,</span><br><span class="line">	.fops = &amp;binder_fops</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+<p>这里指定了Binder设备的名称是“binder”。这样，在用户空间便可以通过对&#x2F;dev&#x2F;binder文件进行操作来使用Binder。</p>
+<p>binder_miscdev同时也指定了该设备的fops。fops是另外一个结构体，这个结构中包含了一系列的函数指针，其定义如下：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="type">static</span> <span class="type">const</span> <span class="class"><span class="keyword">struct</span> <span class="title">file_operations</span> <span class="title">binder_fops</span> =</span> &#123;</span><br><span class="line">	.owner = THIS_MODULE,</span><br><span class="line">	<span class="comment">//对应了poll系统调用的处理</span></span><br><span class="line">	.poll = binder_poll, </span><br><span class="line">	.unlocked_ioctl = binder_ioctl,</span><br><span class="line">	.compat_ioctl = binder_ioctl,</span><br><span class="line">	<span class="comment">//mmap系统调用的处理</span></span><br><span class="line">	.mmap = binder_mmap,</span><br><span class="line">	.open = binder_open,</span><br><span class="line">	.flush = binder_flush,</span><br><span class="line">	.release = binder_release,</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>这里除了owner之外，每一个字段都是一个函数指针，这些函数指针对应了用户空间在使用Binder设备时的操作。<br>例如：</p>
+<ul>
+<li>binder_poll对应了poll系统调用的处理，</li>
+<li>binder_mmap对应了mmap系统调用的处理，其他类同。</li>
+</ul>
+</blockquote>
+<p>这其中最核心的三个方法：</p>
+<table>
+<thead>
+<tr>
+<th>核心方法</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>binder_open</td>
+<td>打开Binder设备</td>
+</tr>
+<tr>
+<td>binder_mmap</td>
+<td>进行内存映射</td>
+</tr>
+<tr>
+<td>binder_ioctl</td>
+<td>来进行实际的操作通信命令。<p>Client对于Server端的请求，<p>以及Server对于Client请求结果的返回，都是通过ioctl完成的。</td>
+</tr>
+</tbody></table>
+<h3 id="2、驱动主要结构"><a href="#2、驱动主要结构" class="headerlink" title="2、驱动主要结构"></a><span id="jump3_2">2、驱动主要结构</span></h3><h4 id="①-与用户空间共用的，用于通信"><a href="#①-与用户空间共用的，用于通信" class="headerlink" title=" ① 与用户空间共用的，用于通信"></a><span id="jump3_2_1"> ① 与用户空间共用的，用于通信</span></h4><p>一类是与用户空间共用的，这些结构体在Binder通信协议过程中会用到。因此，这些结构体定义在binder.h中，包括：</p>
+<table>
+<thead>
+<tr>
+<th>结构体名称</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><span style="color:red">&gt;binder_write_read</td>
+<td>存储一次读写操作的数据</td>
+</tr>
+<tr>
+<td><span style="color:red">binder_transaction_data</td>
+<td>存储一次事务的数据</td>
+</tr>
+<tr>
+<td>flat_binder_object</td>
+<td>描述在Binder</td>
+</tr>
+<tr>
+<td>binder_version</td>
+<td>存储Binder的版本号</td>
+</tr>
+<tr>
+<td>transaction_flags</td>
+<td></td>
+</tr>
+<tr>
+<td>binder_ptr_cookie</td>
+<td>包含了一个指针和一个cookie</td>
+</tr>
+<tr>
+<td>binder_handle_cookie</td>
+<td>包含了一个句柄和一个cookie</td>
+</tr>
+</tbody></table>
+<h4 id="②-Binder驱动内部实现过程中需要的"><a href="#②-Binder驱动内部实现过程中需要的" class="headerlink" title=" ② Binder驱动内部实现过程中需要的"></a><span id="jump3_2_2"> ② Binder驱动内部实现过程中需要的</span></h4><table>
+<thead>
+<tr>
+<th>结构体名称</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>结构体名称</td>
+<td>说明</td>
+</tr>
+<tr>
+<td><span style="color:red">binder_node</td>
+<td>描述Binder实体节点，即：对应了一个Server</td>
+</tr>
+<tr>
+<td><span style="color:red">binder_ref</td>
+<td>描述对于Binder实体的引用</td>
+</tr>
+<tr>
+<td><span style="color:red">binder_buffer</td>
+<td>描述Binder通信过程中存储数据的Buffer</td>
+</tr>
+<tr>
+<td><span style="color:red">binder_proc</td>
+<td>描述使用Binder的进程</td>
+</tr>
+<tr>
+<td><span style="color:red">binder_thread</td>
+<td>描述使用Binder的线程</td>
+</tr>
+<tr>
+<td>binder_work</td>
+<td>描述通信过程中的一项任务</td>
+</tr>
+<tr>
+<td>binder_transaction</td>
+<td>描述一次事务的相关信息</td>
+</tr>
+<tr>
+<td>binder_deferred_state</td>
+<td>描述延迟任务</td>
+</tr>
+<tr>
+<td>binder_ref_death</td>
+<td>描述Binder实体死亡的信息</td>
+</tr>
+<tr>
+<td>binder_transaction_log</td>
+<td>debugfs日志</td>
+</tr>
+<tr>
+<td>binder_transaction_log_entry</td>
+<td>debugfs日志条目</td>
+</tr>
+</tbody></table>
+<p>红色部分是比较重要的；</p>
+<h2 id="四、BInder通信"><a href="#四、BInder通信" class="headerlink" title="四、BInder通信"></a><span id="jump5">四、BInder通信</span></h2><h3 id="1、BInder协议"><a href="#1、BInder协议" class="headerlink" title="1、BInder协议"></a><span id="jump5_2">1、BInder协议</span></h3><h4 id="①-控制类协议：如注册成ServiceManager"><a href="#①-控制类协议：如注册成ServiceManager" class="headerlink" title=" ① 控制类协议：如注册成ServiceManager"></a><span id="jump5_2_1"> ① 控制类协议：如注册成ServiceManager</span></h4><p>控制协议是进程通过ioctl(“&#x2F;dev&#x2F;binder”) 与Binder设备进行通讯的协议，该协议包含以下几种命令：</p>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>说明</th>
+<th>参数类型</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>BINDER_WRITE_READ</td>
+<td><span style="color:red">读写操作</span>，最常用的命令。IPC过程就是通过这个命令进行数据传递</td>
+<td>binder_write_read</td>
+</tr>
+<tr>
+<td>BINDER_SET_MAX_THREADS</td>
+<td><span style="color:red">设置进程支持的最大线程数量</td>
+<td>size_t</td>
+</tr>
+<tr>
+<td>BINDER_SET_CONTEXT_MGR</td>
+<td><span style="color:red">设置自身为ServiceManager</td>
+<td>无</td>
+</tr>
+<tr>
+<td>BINDER_THREAD_EXIT</td>
+<td>通知驱动Binder线程退出</td>
+<td>无</td>
+</tr>
+<tr>
+<td>BINDER_VERSION</td>
+<td>获取Binder驱动的版本号</td>
+<td>binder_version</td>
+</tr>
+</tbody></table>
+<h4 id="②-驱动类协议：BC-BR"><a href="#②-驱动类协议：BC-BR" class="headerlink" title=" ② 驱动类协议：BC&#x2F;BR"></a><span id="jump5_2_2"> ② 驱动类协议：BC&#x2F;BR</span></h4><ul>
+<li><span style="color:red;">BC请求码</span>：BINDER_COMMAND_PROTOCOL：描述了进程发送给Binder驱动的命令</li>
+<li><span style="color:red;">BR响应码</span>：BINDER_RETURN_PROTOCOL ：描述了Binder驱动发送给进程的命令</li>
+</ul>
+<p>BC类型如下：</p>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>说明</th>
+<th>参数类型</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>BC_TRANSACTION</td>
+<td>Binder事务，即：Client对于Server的请求</td>
+<td>binder_transaction_data</td>
+</tr>
+<tr>
+<td>BC_REPLY</td>
+<td>事务的应答，即：Server对于Client的回复</td>
+<td>binder_transaction_data</td>
+</tr>
+<tr>
+<td>BC_FREE_BUFFER</td>
+<td>通知驱动释放Buffer</td>
+<td>binder_uintptr_t</td>
+</tr>
+<tr>
+<td>BC_ACQUIRE</td>
+<td>强引用计数+1</td>
+<td>__u32</td>
+</tr>
+<tr>
+<td>BC_RELEASE</td>
+<td>强引用计数-1</td>
+<td>__u32</td>
+</tr>
+<tr>
+<td>BC_INCREFS</td>
+<td>弱引用计数+1</td>
+<td>__u32</td>
+</tr>
+<tr>
+<td>BC_DECREFS</td>
+<td>弱引用计数-1</td>
+<td>__u32</td>
+</tr>
+<tr>
+<td>BC_ACQUIRE_DONE</td>
+<td>BR_ACQUIRE的回复</td>
+<td>binder_ptr_cookie</td>
+</tr>
+<tr>
+<td>BC_INCREFS_DONE</td>
+<td>BR_INCREFS的回复</td>
+<td>binder_ptr_cookie</td>
+</tr>
+<tr>
+<td>BC_ENTER_LOOPER</td>
+<td>通知驱动主线程ready</td>
+<td>void</td>
+</tr>
+<tr>
+<td>BC_REGISTER_LOOPER</td>
+<td>通知驱动子线程ready</td>
+<td>void</td>
+</tr>
+<tr>
+<td>BC_EXIT_LOOPER</td>
+<td>通知驱动线程已经退出</td>
+<td>void</td>
+</tr>
+<tr>
+<td>BC_REQUEST_DEATH_NOTIFICATION</td>
+<td>请求接收死亡通知</td>
+<td>binder_handle_cookie</td>
+</tr>
+<tr>
+<td>BC_CLEAR_DEATH_NOTIFICATION</td>
+<td>去除接收死亡通知</td>
+<td>binder_handle_cookie</td>
+</tr>
+<tr>
+<td>BC_DEAD_BINDER_DONE</td>
+<td>已经处理完死亡通知</td>
+<td>binder_uintptr_t</td>
+</tr>
+</tbody></table>
+<p>BR类型如下：</p>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>说明</th>
+<th>参数类型</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>BR_OK</td>
+<td>操作完成</td>
+<td>void</td>
+</tr>
+<tr>
+<td>BR_NOOP</td>
+<td>操作完成</td>
+<td>void</td>
+</tr>
+<tr>
+<td>BR_ERROR</td>
+<td>发生错误</td>
+<td>__s32</td>
+</tr>
+<tr>
+<td>BR_TRANSACTION</td>
+<td>通知进程收到一次Binder请求（Server端）</td>
+<td>binder_transaction_data</td>
+</tr>
+<tr>
+<td>BR_REPLY</td>
+<td>通知进程收到Binder请求的回复（Client）</td>
+<td>binder_transaction_data</td>
+</tr>
+<tr>
+<td>BR_TRANSACTION_COMPLETE</td>
+<td>驱动对于接受请求的确认回复</td>
+<td>void</td>
+</tr>
+<tr>
+<td>BR_FAILED_REPLY</td>
+<td>告知发送方通信目标不存在</td>
+<td>void</td>
+</tr>
+<tr>
+<td>BR_SPAWN_LOOPER</td>
+<td>通知Binder进程创建一个新的线程</td>
+<td>void</td>
+</tr>
+<tr>
+<td>BR_ACQUIRE</td>
+<td>强引用计数+1请求</td>
+<td>binder_ptr_cookie</td>
+</tr>
+<tr>
+<td>BR_RELEASE</td>
+<td>强引用计数-1请求</td>
+<td>binder_ptr_cookie</td>
+</tr>
+<tr>
+<td>BR_INCREFS</td>
+<td>弱引用计数+1请求</td>
+<td>binder_ptr_cookie</td>
+</tr>
+<tr>
+<td>BR_DECREFS</td>
+<td>若引用计数-1请求</td>
+<td>binder_ptr_cookie</td>
+</tr>
+<tr>
+<td>BR_DEAD_BINDER</td>
+<td>发送死亡通知</td>
+<td>binder_uintptr_t</td>
+</tr>
+<tr>
+<td>BR_CLEAR_DEATH_NOTIFICATION_DONE</td>
+<td>清理死亡通知完成</td>
+<td>binder_uintptr_t</td>
+</tr>
+<tr>
+<td>BR_DEAD_REPLY</td>
+<td>告知发送方对方已经死亡</td>
+<td>void</td>
+</tr>
+</tbody></table>
+<h3 id="2、Binder通信过程"><a href="#2、Binder通信过程" class="headerlink" title="2、Binder通信过程"></a><span id="jump5_1">2、Binder通信过程</span></h3><p>下图是一次完整的Binder通信过程<br><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_8.jpg" alt="img"></p>
+<p>注意在通信时，是通过Binder协议的<br>Binder协议包含在IPC数据中，分为两类:</p>
+<ul>
+<li><span style="color:red;">BC请求码</span>：BINDER_COMMAND_PROTOCOL：binder请求码，以”BC_“开头，简称BC码，用于从IPC层传递到Binder Driver层；</li>
+<li><span style="color:red;">BR响应码</span>：BINDER_RETURN_PROTOCOL ：binder响应码，以”BR_“开头，简称BR码，用于从Binder Driver层传递到IPC层；</li>
+</ul>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_9.jpg" alt="img"></p>
+<p>Binder IPC通信至少是两个进程的交互：</p>
+<ul>
+<li>client进程执行binder_thread_write，根据BC_XXX命令，生成相应的binder_work；</li>
+<li>server进程执行binder_thread_read，根据binder_work.type类型，生成BR_XXX，发送到用户空间处理。</li>
+</ul>
+<h2 id="六、open-driver-打开驱动过程"><a href="#六、open-driver-打开驱动过程" class="headerlink" title="六、open_driver()打开驱动过程"></a><span id="jump6">六、open_driver()打开驱动过程</span></h2><h3 id="1、binder-open-打开Binder设备"><a href="#1、binder-open-打开Binder设备" class="headerlink" title="1、binder_open() 打开Binder设备"></a><span id="jump6_1">1、binder_open() 打开Binder设备</span></h3><p>任何进程在使用Binder之前，都需要先通过open(“&#x2F;dev&#x2F;binder”)打开Binder设备。上文已经提到，用户空间的open系统调用对应了驱动中的binder_open函数。在这个函数，Binder驱动会为调用的进程做一些初始化工作。binder_open函数代码如下所示：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br></pre></td><td class="code"><pre><span class="line"><span class="type">static</span> <span class="type">int</span> <span class="title function_">binder_open</span><span class="params">(<span class="keyword">struct</span> inode *nodp, <span class="keyword">struct</span> file *filp)</span></span><br><span class="line">&#123;</span><br><span class="line">	<span class="class"><span class="keyword">struct</span> <span class="title">binder_proc</span> *<span class="title">proc</span>;</span></span><br><span class="line"></span><br><span class="line">   <span class="comment">// 创建进程对应的binder_proc对象</span></span><br><span class="line">	proc = kzalloc(<span class="keyword">sizeof</span>(*proc), GFP_KERNEL);</span><br><span class="line">	<span class="keyword">if</span> (proc == <span class="literal">NULL</span>)</span><br><span class="line">		<span class="keyword">return</span> -ENOMEM;</span><br><span class="line">	get_task_struct(current);</span><br><span class="line">	proc-&gt;tsk = current;</span><br><span class="line">	<span class="comment">// 初始化binder_proc</span></span><br><span class="line">	INIT_LIST_HEAD(&amp;proc-&gt;todo);</span><br><span class="line">	init_waitqueue_head(&amp;proc-&gt;wait);</span><br><span class="line">	proc-&gt;default_priority = task_nice(current);</span><br><span class="line"></span><br><span class="line">  <span class="comment">// 锁保护</span></span><br><span class="line">	binder_lock(__func__);</span><br><span class="line"></span><br><span class="line">	binder_stats_created(BINDER_STAT_PROC);</span><br><span class="line">	<span class="comment">// 添加到全局列表binder_procs中</span></span><br><span class="line">	hlist_add_head(&amp;proc-&gt;proc_node, &amp;binder_procs);</span><br><span class="line">	proc-&gt;pid = current-&gt;group_leader-&gt;pid;</span><br><span class="line">	INIT_LIST_HEAD(&amp;proc-&gt;delivered_death);</span><br><span class="line">	filp-&gt;private_data = proc;</span><br><span class="line"></span><br><span class="line">	binder_unlock(__func__);</span><br><span class="line"></span><br><span class="line">	<span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>在Binder驱动中，通过binder_procs记录了所有使用Binder的进程。每个初次打开Binder设备的进程都会被添加到这个列表中的。</p>
+<p>另外，请读者回顾一下上文介绍的Binder驱动中的几个关键结构体：</p>
+<ul>
+<li>binder_proc</li>
+<li>binder_node</li>
+<li>binder_thread</li>
+<li>binder_ref</li>
+<li>binder_buffer</li>
+</ul>
+<p>在实现过程中，为了便于查找，这些结构体互相之间都留有字段存储关联的结构。</p>
+<p>下面这幅图描述了这里说到的这些内容：</p>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_10.jpg" alt="image.png"></p>
+<h3 id="2、mmap内存映射"><a href="#2、mmap内存映射" class="headerlink" title="2、mmap内存映射"></a><span id="jump6_2">2、mmap内存映射</span></h3><p>在打开Binder设备之后，进程还会通过mmap进行内存映射。mmap的作用有如下两个：</p>
+<ul>
+<li>申请一块内存空间，用来接收Binder通信过程中的数据</li>
+<li>对这块内存进行地址映射，以便将来访问</li>
+</ul>
+<p>binder_mmap函数对应了mmap系统调用的处理，这个函数也是Binder驱动的精华所在（这里说的binder_mmap函数也包括其内部调用的binder_update_page_range函数，见下文）。</p>
+<p>前文我们说到，使用Binder机制，数据只需要经历一次拷贝就可以了，其原理就在这个函数中。</p>
+<p>binder_mmap这个函数中，会申请一块物理内存，然后在用户空间和内核空间同时对应到这块内存上。在这之后，当有Client要发送数据给Server的时候，只需一次，将Client发送过来的数据拷贝到Server端的内核空间指定的内存地址即可，由于这个内存地址在服务端已经同时映射到用户空间，因此无需再做一次复制，Server即可直接访问，整个过程如下图所示：</p>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_11.jpg" alt="image.png"></p>
+<p>这幅图的说明如下：</p>
+<ul>
+<li>1、Server在启动之后，调用对&#x2F;dev&#x2F;binder设备调用mmap</li>
+<li>2、内核中的binder_mmap函数进行对应的处理：申请一块物理内存，然后在用户空间和内核空间同时进行映射</li>
+<li>3、Client通过BINDER_WRITE_READ命令发送请求，这个请求将先到驱动中，同时需要将数据从Client进程的用户空间拷贝到内核空间</li>
+<li>4、驱动通过BR_TRANSACTION通知Server有人发出请求，Server进行处理。由于这块内存也在用户空间进行了映射，因此Server进程的代码可以直接访问</li>
+</ul>
+<p>了解原理之后，我们再来看一下Binder驱动的相关源码。这段代码有两个函数：</p>
+<ul>
+<li>binder_mmap函数对应了mmap的系统调用的处理</li>
+<li>binder_update_page_range函数真正实现了内存分配和地址映射</li>
+</ul>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br></pre></td><td class="code"><pre><span class="line"><span class="type">static</span> <span class="type">int</span> <span class="title function_">binder_mmap</span><span class="params">(<span class="keyword">struct</span> file *filp, <span class="keyword">struct</span> vm_area_struct *vma)</span></span><br><span class="line">&#123;</span><br><span class="line">	<span class="type">int</span> ret;</span><br><span class="line"></span><br><span class="line">	<span class="class"><span class="keyword">struct</span> <span class="title">vm_struct</span> *<span class="title">area</span>;</span></span><br><span class="line">	<span class="class"><span class="keyword">struct</span> <span class="title">binder_proc</span> *<span class="title">proc</span> =</span> filp-&gt;private_data;</span><br><span class="line">	<span class="type">const</span> <span class="type">char</span> *failure_string;</span><br><span class="line">	<span class="class"><span class="keyword">struct</span> <span class="title">binder_buffer</span> *<span class="title">buffer</span>;</span></span><br><span class="line"></span><br><span class="line">	...</span><br><span class="line">   <span class="comment">// 在内核空间获取一块地址范围</span></span><br><span class="line">	area = get_vm_area(vma-&gt;vm_end - vma-&gt;vm_start, VM_IOREMAP);</span><br><span class="line">	<span class="keyword">if</span> (area == <span class="literal">NULL</span>) &#123;</span><br><span class="line">		ret = -ENOMEM;</span><br><span class="line">		failure_string = <span class="string">&quot;get_vm_area&quot;</span>;</span><br><span class="line">		<span class="keyword">goto</span> err_get_vm_area_failed;</span><br><span class="line">	&#125;</span><br><span class="line">	proc-&gt;buffer = area-&gt;addr;</span><br><span class="line">	<span class="comment">// 记录内核空间与用户空间的地址偏移</span></span><br><span class="line">	proc-&gt;user_buffer_offset = vma-&gt;vm_start - (<span class="type">uintptr_t</span>)proc-&gt;buffer;</span><br><span class="line">	mutex_unlock(&amp;binder_mmap_lock);</span><br><span class="line"></span><br><span class="line">  ...</span><br><span class="line">	proc-&gt;pages = kzalloc(<span class="keyword">sizeof</span>(proc-&gt;pages[<span class="number">0</span>]) * ((vma-&gt;vm_end - vma-&gt;vm_start) / PAGE_SIZE), GFP_KERNEL);</span><br><span class="line">	<span class="keyword">if</span> (proc-&gt;pages == <span class="literal">NULL</span>) &#123;</span><br><span class="line">		ret = -ENOMEM;</span><br><span class="line">		failure_string = <span class="string">&quot;alloc page array&quot;</span>;</span><br><span class="line">		<span class="keyword">goto</span> err_alloc_pages_failed;</span><br><span class="line">	&#125;</span><br><span class="line">	proc-&gt;buffer_size = vma-&gt;vm_end - vma-&gt;vm_start;</span><br><span class="line"></span><br><span class="line">	vma-&gt;vm_ops = &amp;binder_vm_ops;</span><br><span class="line">	vma-&gt;vm_private_data = proc;</span><br><span class="line"></span><br><span class="line">	<span class="comment">/* binder_update_page_range assumes preemption is disabled */</span></span><br><span class="line">	preempt_disable();</span><br><span class="line">	<span class="comment">// 通过下面这个函数真正完成内存的申请和地址的映射</span></span><br><span class="line">	<span class="comment">// 初次使用，先申请一个PAGE_SIZE大小的内存</span></span><br><span class="line">	ret = binder_update_page_range(proc, <span class="number">1</span>, proc-&gt;buffer, proc-&gt;buffer + PAGE_SIZE, vma);</span><br><span class="line">	...</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="type">static</span> <span class="type">int</span> <span class="title function_">binder_update_page_range</span><span class="params">(<span class="keyword">struct</span> binder_proc *proc, <span class="type">int</span> allocate,</span></span><br><span class="line"><span class="params">				    <span class="type">void</span> *start, <span class="type">void</span> *end,</span></span><br><span class="line"><span class="params">				    <span class="keyword">struct</span> vm_area_struct *vma)</span></span><br><span class="line">&#123;</span><br><span class="line">	<span class="type">void</span> *page_addr;</span><br><span class="line">	<span class="type">unsigned</span> <span class="type">long</span> user_page_addr;</span><br><span class="line">	<span class="class"><span class="keyword">struct</span> <span class="title">vm_struct</span> <span class="title">tmp_area</span>;</span></span><br><span class="line">	<span class="class"><span class="keyword">struct</span> <span class="title">page</span> **<span class="title">page</span>;</span></span><br><span class="line">	<span class="class"><span class="keyword">struct</span> <span class="title">mm_struct</span> *<span class="title">mm</span>;</span></span><br><span class="line"></span><br><span class="line">	...</span><br><span class="line"></span><br><span class="line">	<span class="keyword">for</span> (page_addr = start; page_addr &lt; end; page_addr += PAGE_SIZE) &#123;</span><br><span class="line">		<span class="type">int</span> ret;</span><br><span class="line">		<span class="class"><span class="keyword">struct</span> <span class="title">page</span> **<span class="title">page_array_ptr</span>;</span></span><br><span class="line">		page = &amp;proc-&gt;pages[(page_addr - proc-&gt;buffer) / PAGE_SIZE];</span><br><span class="line"></span><br><span class="line">		BUG_ON(*page);</span><br><span class="line">		<span class="comment">// 真正进行内存的分配</span></span><br><span class="line">		*page = alloc_page(GFP_KERNEL | __GFP_HIGHMEM | __GFP_ZERO);</span><br><span class="line">		<span class="keyword">if</span> (*page == <span class="literal">NULL</span>) &#123;</span><br><span class="line">			pr_err(<span class="string">&quot;%d: binder_alloc_buf failed for page at %p\n&quot;</span>,</span><br><span class="line">				proc-&gt;pid, page_addr);</span><br><span class="line">			<span class="keyword">goto</span> err_alloc_page_failed;</span><br><span class="line">		&#125;</span><br><span class="line">		tmp_area.addr = page_addr;</span><br><span class="line">		tmp_area.size = PAGE_SIZE + PAGE_SIZE <span class="comment">/* guard page? */</span>;</span><br><span class="line">		page_array_ptr = page;</span><br><span class="line">		<span class="comment">// 在内核空间进行内存映射</span></span><br><span class="line">		ret = map_vm_area(&amp;tmp_area, PAGE_KERNEL, &amp;page_array_ptr);</span><br><span class="line">		<span class="keyword">if</span> (ret) &#123;</span><br><span class="line">			pr_err(<span class="string">&quot;%d: binder_alloc_buf failed to map page at %p in kernel\n&quot;</span>,</span><br><span class="line">			       proc-&gt;pid, page_addr);</span><br><span class="line">			<span class="keyword">goto</span> err_map_kernel_failed;</span><br><span class="line">		&#125;</span><br><span class="line">		user_page_addr =</span><br><span class="line">			(<span class="type">uintptr_t</span>)page_addr + proc-&gt;user_buffer_offset;</span><br><span class="line">		<span class="comment">// 在用户空间进行内存映射</span></span><br><span class="line">		ret = vm_insert_page(vma, user_page_addr, page[<span class="number">0</span>]);</span><br><span class="line">		<span class="keyword">if</span> (ret) &#123;</span><br><span class="line">			pr_err(<span class="string">&quot;%d: binder_alloc_buf failed to map page at %lx in userspace\n&quot;</span>,</span><br><span class="line">			       proc-&gt;pid, user_page_addr);</span><br><span class="line">			<span class="keyword">goto</span> err_vm_insert_page_failed;</span><br><span class="line">		&#125;</span><br><span class="line">		<span class="comment">/* vm_insert_page does not seem to increment the refcount */</span></span><br><span class="line">	&#125;</span><br><span class="line">	<span class="keyword">if</span> (mm) &#123;</span><br><span class="line">		up_write(&amp;mm-&gt;mmap_sem);</span><br><span class="line">		mmput(mm);</span><br><span class="line">	&#125;</span><br><span class="line"></span><br><span class="line">	preempt_disable();</span><br><span class="line"></span><br><span class="line">	<span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p>在开发过程中，我们可以通过procfs看到进程映射的这块内存空间：</p>
+<ul>
+<li>1、将Android设备连接到电脑上之后，通过adb shell进入到终端</li>
+<li>2、然后选择一个使用了Binder的进程，例如system_server（这是系统中一个非常重要的进程，下一章我们会专门讲解），通过 ps | grep system_server来确定进程号，例如是1889</li>
+<li>3、通过 cat &#x2F;proc&#x2F;[pid]&#x2F;maps | grep “&#x2F;dev&#x2F;binder” 过滤出这块内存的地址</li>
+</ul>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">angler:/ # ps  | grep system_server</span><br><span class="line">system    1889  526   2353404 140016 SyS_epoll_ 72972eeaf4 S system_server</span><br><span class="line">angler:/ # cat /proc/1889/maps | grep &quot;/dev/binder&quot;</span><br><span class="line">7294761000-729485f000 r--p 00000000 00:0c 12593                          /dev/binder</span><br></pre></td></tr></table></figure>
+<h3 id="3、内存的管理"><a href="#3、内存的管理" class="headerlink" title="3、内存的管理"></a><span id="jump6_3">3、内存的管理</span></h3><p>去原文中看吧，感觉对面试帮助不大；<br><a target="_blank" rel="noopener" href="https://paul.pub/android-binder-driver/">https://paul.pub/android-binder-driver/</a></p>
+<h3 id="4、驱动层线程管理"><a href="#4、驱动层线程管理" class="headerlink" title="4、驱动层线程管理"></a><span id="jump6_4">4、驱动层线程管理</span></h3><p>上文多次提到，Binder本身是C&#x2F;S架构。由Server提供服务，被Client使用。既然是C&#x2F;S架构，就可能存在多个Client会同时访问Server的情况。 在这种情况下，如果Server只有一个线程处理响应，就会导致客户端的请求可能需要排队而导致响应过慢的现象发生。解决这个问题的方法就是引入多线程。</p>
+<p>Binder机制的设计从最底层–驱动层，就考虑到了对于多线程的支持。具体内容如下：</p>
+<ul>
+<li>使用Binder的进程在启动之后，通过BINDER_SET_MAX_THREADS告知驱动其支持的最大线程数量</li>
+<li>驱动会对线程进行管理。在binder_proc结构中，这些字段记录了进程中线程的信息：max_threads，requested_threads，requested_threads_started，ready_threads</li>
+<li>binder_thread结构对应了Binder进程中的线程</li>
+<li>驱动通过BR_SPAWN_LOOPER命令告知进程需要创建一个新的线程</li>
+<li>进程通过BC_ENTER_LOOPER命令告知驱动其主线程已经ready</li>
+<li>进程通过BC_REGISTER_LOOPER命令告知驱动其子线程（非主线程）已经ready</li>
+<li>进程通过BC_EXIT_LOOPER命令告知驱动其线程将要退出</li>
+<li>在线程退出之后，通过BINDER_THREAD_EXIT告知Binder驱动。驱动将对应的binder_thread对象销毁</li>
+</ul>
+<h2 id="六、Binder中的“面向对象”"><a href="#六、Binder中的“面向对象”" class="headerlink" title="六、Binder中的“面向对象”"></a><span id="jump7">六、Binder中的“面向对象”</span></h2><p>Binder机制淡化了进程的边界，使得跨越进程也能够调用到指定服务的方法，其原因是因为Binder机制在底层处理了在进程间的“对象”传递。</p>
+<p>在Binder驱动中，并不是真的将对象在进程间来回序列化，而是通过特定的标识来进行对象的传递。Binder驱动中，通过flat_binder_object来描述需要跨越进程传递的对象。其定义如下：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">flat_binder_object</span> &#123;</span></span><br><span class="line">	__u32		type;</span><br><span class="line">	__u32		flags;</span><br><span class="line"></span><br><span class="line">	<span class="class"><span class="keyword">union</span> &#123;</span></span><br><span class="line">		<span class="type">binder_uintptr_t</span>	binder; <span class="comment">/* local object */</span></span><br><span class="line">		__u32			handle;	<span class="comment">/* remote object */</span></span><br><span class="line">	&#125;;</span><br><span class="line">	<span class="type">binder_uintptr_t</span>	cookie;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+<p>这其中，type有如下5种类型。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">enum</span> &#123;</span></span><br><span class="line">	BINDER_TYPE_BINDER	= B_PACK_CHARS(<span class="string">&#x27;s&#x27;</span>, <span class="string">&#x27;b&#x27;</span>, <span class="string">&#x27;*&#x27;</span>, B_TYPE_LARGE),</span><br><span class="line">	BINDER_TYPE_WEAK_BINDER	= B_PACK_CHARS(<span class="string">&#x27;w&#x27;</span>, <span class="string">&#x27;b&#x27;</span>, <span class="string">&#x27;*&#x27;</span>, B_TYPE_LARGE),</span><br><span class="line">	BINDER_TYPE_HANDLE	= B_PACK_CHARS(<span class="string">&#x27;s&#x27;</span>, <span class="string">&#x27;h&#x27;</span>, <span class="string">&#x27;*&#x27;</span>, B_TYPE_LARGE),</span><br><span class="line">	BINDER_TYPE_WEAK_HANDLE	= B_PACK_CHARS(<span class="string">&#x27;w&#x27;</span>, <span class="string">&#x27;h&#x27;</span>, <span class="string">&#x27;*&#x27;</span>, B_TYPE_LARGE),</span><br><span class="line">	BINDER_TYPE_FD		= B_PACK_CHARS(<span class="string">&#x27;f&#x27;</span>, <span class="string">&#x27;d&#x27;</span>, <span class="string">&#x27;*&#x27;</span>, B_TYPE_LARGE),</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>当对象传递到Binder驱动中的时候，由驱动来进行翻译和解释，然后传递到接收的进程。</p>
+<p>例如:</p>
+<ul>
+<li>1、当Server把Binder实体传递给Client时，在发送数据流中，<strong>flat_binder_object</strong> 中的type是BINDER_TYPE_BINDER，同时binder字段指向Server进程用户空间地址。</li>
+<li>2、但这个地址对于Client进程是没有意义的（Linux中，每个进程的地址空间是互相隔离的），驱动必须对数据流中的 <strong>flat_binder_object</strong> 做相应的翻译：</li>
+<li>3、将type改成BINDER_TYPE_HANDLE；为这个Binder在接收进程中创建位于内核中的引用并将引用号填入handle中。</li>
+<li>4、对于发生数据流中引用类型的Binder也要做同样转换。经过处理后接收进程从数据流中取得的Binder引用才是有效的，才可以将其填入数据包binder_transaction_data的target.handle域，向Binder实体发送请求。</li>
+</ul>
+<p>由于每个请求和请求的返回都会经历内核的翻译，因此这个过程从进程的角度来看是完全透明的。进程完全不用感知这个过程，就好像对象真的在进程间来回传递一样。</p>
+<h2 id="七、ServiceManager注册、获取"><a href="#七、ServiceManager注册、获取" class="headerlink" title="七、ServiceManager注册、获取"></a><span id="jump9">七、ServiceManager注册、获取</span></h2><p>上文已经说过，每一个Binder Server在驱动中会有一个binder_node进行对应。同时，Binder驱动会负责在进程间传递服务对象，并负责底层的转换。另外，我们也提到，每一个Binder服务都需要有一个唯一的名称。由ServiceManager来管理这些服务的注册和查找。</p>
+<p>而实际上，为了便于使用，ServiceManager本身也实现为一个Server对象。任何进程在使用ServiceManager的时候，都需要先拿到指向它的标识。然后通过这个标识来使用ServiceManager。</p>
+<p>这似乎形成了一个互相矛盾的现象：</p>
+<ul>
+<li>1、通过ServiceManager我们才能拿到Server的标识</li>
+<li>2、ServiceManager本身也是一个Server</li>
+</ul>
+<p>解决这个矛盾的办法其实也很简单：Binder机制为ServiceManager预留了一个特殊的位置。这个位置是预先定好的，任何想要使用ServiceManager的进程只要通过这个特定的位置就可以访问到ServiceManager了（而不用再通过ServiceManager的接口）。</p>
+<p>在Binder驱动中，有一个全局的变量：指向的就是ServiceManager。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="type">static</span> <span class="class"><span class="keyword">struct</span> <span class="title">binder_node</span> *<span class="title">binder_context_mgr_node</span>;</span></span><br></pre></td></tr></table></figure>
+
+<p>当有进程通过ioctl并指定命令为BINDER_SET_CONTEXT_MGR的时候，驱动被认定这个进程是ServiceManager，binder_ioctl函数中对应的处理如下：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">case</span> BINDER_SET_CONTEXT_MGR:</span><br><span class="line">	<span class="keyword">if</span> (binder_context_mgr_node != <span class="literal">NULL</span>) &#123;</span><br><span class="line">		pr_err(<span class="string">&quot;BINDER_SET_CONTEXT_MGR already set\n&quot;</span>);</span><br><span class="line">		ret = -EBUSY;</span><br><span class="line">		<span class="keyword">goto</span> err;</span><br><span class="line">	&#125;</span><br><span class="line">	ret = security_binder_set_context_mgr(proc-&gt;tsk);</span><br><span class="line">	<span class="keyword">if</span> (ret &lt; <span class="number">0</span>)</span><br><span class="line">		<span class="keyword">goto</span> err;</span><br><span class="line">	<span class="keyword">if</span> (uid_valid(binder_context_mgr_uid)) &#123;</span><br><span class="line">		<span class="keyword">if</span> (!uid_eq(binder_context_mgr_uid, current-&gt;cred-&gt;euid)) &#123;</span><br><span class="line">			pr_err(<span class="string">&quot;BINDER_SET_CONTEXT_MGR bad uid %d != %d\n&quot;</span>,</span><br><span class="line">			       from_kuid(&amp;init_user_ns, current-&gt;cred-&gt;euid),</span><br><span class="line">			       from_kuid(&amp;init_user_ns, binder_context_mgr_uid));</span><br><span class="line">			ret = -EPERM;</span><br><span class="line">			<span class="keyword">goto</span> err;</span><br><span class="line">		&#125;</span><br><span class="line">	&#125; <span class="keyword">else</span></span><br><span class="line">		binder_context_mgr_uid = current-&gt;cred-&gt;euid;</span><br><span class="line">	binder_context_mgr_node = binder_new_node(proc, <span class="number">0</span>, <span class="number">0</span>);</span><br><span class="line">	<span class="keyword">if</span> (binder_context_mgr_node == <span class="literal">NULL</span>) &#123;</span><br><span class="line">		ret = -ENOMEM;</span><br><span class="line">		<span class="keyword">goto</span> err;</span><br><span class="line">	&#125;</span><br><span class="line">	binder_context_mgr_node-&gt;local_weak_refs++;</span><br><span class="line">	binder_context_mgr_node-&gt;local_strong_refs++;</span><br><span class="line">	binder_context_mgr_node-&gt;has_strong_ref = <span class="number">1</span>;</span><br><span class="line">	binder_context_mgr_node-&gt;has_weak_ref = <span class="number">1</span>;</span><br><span class="line">	<span class="keyword">break</span>;</span><br></pre></td></tr></table></figure>
+
+<p>ServiceManager应当要先于所有Binder Server之前启动。在它启动完成并告知Binder驱动之后，驱动便设定好了这个特定的节点。</p>
+<p>在这之后，当有其他模块想要使用ServerManager的时候，只要将请求指向ServiceManager所在的位置即可。</p>
+<p>在Binder驱动中，通过handle &#x3D; 0这个位置来访问ServiceManager。例如，binder_transaction中，判断如果target.handler为0，则认为这个请求是发送给ServiceManager的，相关代码如下：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (tr-&gt;target.handle) &#123;</span><br><span class="line">	<span class="class"><span class="keyword">struct</span> <span class="title">binder_ref</span> *<span class="title">ref</span>;</span></span><br><span class="line">	ref = binder_get_ref(proc, tr-&gt;target.handle, <span class="literal">true</span>);</span><br><span class="line">	<span class="keyword">if</span> (ref == <span class="literal">NULL</span>) &#123;</span><br><span class="line">		binder_user_error(<span class="string">&quot;%d:%d got transaction to invalid handle\n&quot;</span>,</span><br><span class="line">			proc-&gt;pid, thread-&gt;pid);</span><br><span class="line">		return_error = BR_FAILED_REPLY;</span><br><span class="line">		<span class="keyword">goto</span> err_invalid_target_handle;</span><br><span class="line">	&#125;</span><br><span class="line">	target_node = ref-&gt;node;</span><br><span class="line">&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">	target_node = binder_context_mgr_node;</span><br><span class="line">	<span class="keyword">if</span> (target_node == <span class="literal">NULL</span>) &#123;</span><br><span class="line">		return_error = BR_DEAD_REPLY;</span><br><span class="line">		<span class="keyword">goto</span> err_no_context_mgr_node;</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+
+<h2 id="八、ServiceManager完整的启动流程"><a href="#八、ServiceManager完整的启动流程" class="headerlink" title="八、ServiceManager完整的启动流程"></a><span id="jump8">八、ServiceManager完整的启动流程</span></h2><p>总算说到这了，我们上边提到过很多次了已经。<br>我们知道这个模块负责了所有Binder服务的管理，并且也看到了Binder驱动中对于这个模块的实现。可以说ServiceManager是整个Binder IPC的控制中心和交通枢纽。这里我们就来看一下这个模块的具体实现。</p>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_12.jpg" alt="image"></p>
+<p>简图中我们关注的重点：</p>
+<ul>
+<li>1、core、main、late-start三种类型任务</li>
+<li>2、与AMS类似的系统进程是通过servicemanager来获取IBinder对象，从而得到BpBinder，进而通过binder来通信的</li>
+<li>3、普通应用间，是通过Service组件，来获取IBinder对象，从而得到BpBinder，进程通过binder来通信的；</li>
+</ul>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_13.jpg" alt="Binder全流程图.png"></p>
+<h3 id="1、init-cpp、init-rc启动ServiceManager"><a href="#1、init-cpp、init-rc启动ServiceManager" class="headerlink" title="1、init.cpp、init.rc启动ServiceManager"></a><span id="jump8_1">1、init.cpp、init.rc启动ServiceManager</span></h3><p>那么ServiceManager的进程是谁来启动的呢？<br>答案在init.cpp、init.rc中：</p>
+<blockquote>
+<p>&#x2F;system&#x2F;core&#x2F;init&#x2F;init.cpp<br>&#x2F;system&#x2F;core&#x2F;rootdir&#x2F;init.rc</p>
+</blockquote>
+<h4 id="（一）init-rc：标识core、main、late-start类型服务"><a href="#（一）init-rc：标识core、main、late-start类型服务" class="headerlink" title="（一）init.rc：标识core、main、late_start类型服务 "></a><span id="jump8_1_1">（一）init.rc：标识core、main、late_start类型服务 </span></h4><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">#<span class="number">6.0</span>以前的源码</span><br><span class="line"><span class="comment">//1、Linux以服务形式启动ServiceManager</span></span><br><span class="line">service servicemanager /system/bin/servicemanager</span><br><span class="line">    <span class="comment">//2、servicemanager被注册成core类型</span></span><br><span class="line">    <span class="class"><span class="keyword">class</span> <span class="title">core</span></span></span><br><span class="line"><span class="class">    //3、<span class="title">system</span>系统身份启动</span></span><br><span class="line"><span class="class">    <span class="title">user</span> <span class="title">system</span> </span></span><br><span class="line"><span class="class">    <span class="title">group</span> <span class="title">system</span></span></span><br><span class="line"><span class="class">    //4、标识为关键服务：挂掉后会被系统重启、挂掉4次以上会直接重启设备；</span></span><br><span class="line"><span class="class">    <span class="title">critical</span></span></span><br><span class="line"><span class="class">    <span class="title">onrestart</span> <span class="title">restart</span> <span class="title">healthd</span></span></span><br><span class="line"><span class="class">    //5、当服务重启时，会连带重启<span class="title">zygote</span>、<span class="title">media</span>、<span class="title">surfaceflinger</span>进程</span></span><br><span class="line"><span class="class">    <span class="title">onrestart</span> <span class="title">restart</span> <span class="title">zygote</span> </span></span><br><span class="line"><span class="class">    <span class="title">onrestart</span> <span class="title">restart</span> <span class="title">media</span></span></span><br><span class="line"><span class="class">    <span class="title">onrestart</span> <span class="title">restart</span> <span class="title">surfaceflinger</span></span></span><br><span class="line"><span class="class">    <span class="title">onrestart</span> <span class="title">restart</span> <span class="title">drm</span></span></span><br></pre></td></tr></table></figure>
+
+<p>什么是core类型的服务？<br>在init.rc、init.zygote32.rc	等rc中配置的服务进程中，会用class 标识所属</p>
+<ul>
+<li>1、服务分类为core &gt; main &gt; late_start<ul>
+<li>core：ServiceManager、surfaceflinger、debuggerd。。</li>
+<li>main：zygoet、media。。</li>
+<li>late_start：cmd_services、一般系统定制的服务会放在这</li>
+</ul>
+</li>
+<li>2、在init.cpp <ul>
+<li>main方法中，处理各个类型的任务执行</li>
+<li>指向init.rc中on 注册的任务</li>
+</ul>
+</li>
+</ul>
+<p>重点：</p>
+<ul>
+<li>1、Linux以service服务命形式启动ServiceManager进程</li>
+<li>2、ServiceManager被标识为core类型，最先启动的进程；<ul>
+<li>core &gt; main（zygoet） &gt; late_int（一般系统定制服务放在这）</li>
+<li>zygoet属于main类型，会晚于ServiceManager启动</li>
+</ul>
+</li>
+<li>3、ServiceManager是以system系统身份启动</li>
+<li>4、ServiceManager会被标识为关键服务：<ul>
+<li>挂掉后会被系统重启</li>
+<li>挂掉4次以上会直接重启设备；</li>
+</ul>
+</li>
+<li>5、当ServiceManager进程重启时，会连带重启<ul>
+<li>zygote进程</li>
+<li>media进程</li>
+<li>surfaceflinger进程</li>
+</ul>
+</li>
+</ul>
+<h4 id="（二）init-cpp"><a href="#（二）init-cpp" class="headerlink" title="（二）init.cpp "></a><span id="jump8_1_2">（二）init.cpp </span></h4><h5 id="1-core类型的服务进程是怎么执行的呢？"><a href="#1-core类型的服务进程是怎么执行的呢？" class="headerlink" title="1.core类型的服务进程是怎么执行的呢？ "></a><span id="jump8_1_2_1">1.core类型的服务进程是怎么执行的呢？ </span></h5><p>注意区分late-init 和 rc中late_start不是一个东西；</p>
+<ul>
+<li><p>late-init 是cpp main函数的中控制init.rc 中on late-init执行的</p>
+</li>
+<li><p>late_start 是服务进程的分类</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line">#/system/core/init/init.cpp</span><br><span class="line"></span><br><span class="line"><span class="type">int</span> <span class="title function_">main</span><span class="params">(<span class="type">int</span> argc, <span class="type">char</span>** argv)</span> &#123;</span><br><span class="line">    <span class="comment">//1、加载init.rc</span></span><br><span class="line">    init_parse_config_file(<span class="string">&quot;/init.rc&quot;</span>);</span><br><span class="line">    <span class="comment">//2、对应会执行init.rc中on early-init中的命令</span></span><br><span class="line">    action_for_each_trigger(<span class="string">&quot;early-init&quot;</span>, action_add_queue_tail);</span><br><span class="line">    </span><br><span class="line">    <span class="comment">//3、对应会执行init.rc中on init中的命令，这两个init基本都是mkdir、chomd操作文件；</span></span><br><span class="line">    <span class="comment">// Trigger all the boot actions to get us started.</span></span><br><span class="line">    action_for_each_trigger(<span class="string">&quot;init&quot;</span>, action_add_queue_tail);</span><br><span class="line"></span><br><span class="line">    <span class="comment">//3、这里的对应的init.rc中on late-init的命令才是重点</span></span><br><span class="line">    <span class="comment">// - 其实会执行boot，也就是init.rc中on boot下的命令；</span></span><br><span class="line">    <span class="comment">// - 在on boot中会去执行class_start core，即启动注册成core类型的服务进程</span></span><br><span class="line">    action_for_each_trigger(<span class="string">&quot;late-init&quot;</span>, action_add_queue_tail);</span><br><span class="line">    </span><br><span class="line">    <span class="keyword">while</span>(<span class="literal">true</span>) &#123;</span><br><span class="line">        <span class="comment">//这里就是顺序执行上边的任务</span></span><br><span class="line">        execute_one_command();</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>1、在系统启动时在系统启动时，Linux会去寻找&#x2F;init 的可执行文件，即init.cpp</p>
+</li>
+<li><p>2、会执行init.cpp的main()主函数</p>
+</li>
+<li><p>3、在main()主函数中会去加载init.rc文件</p>
+<ul>
+<li>依次执行init.rc中的：</li>
+<li>on early-init</li>
+<li>on init</li>
+<li>on late-init：回去执行on boot -&gt; class_start core 启动core类型的服务进程</li>
+</ul>
+</li>
+</ul>
+<p>init.rc 源码：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line">on early-init</span><br><span class="line">    ...</span><br><span class="line">    mkdir /mnt <span class="number">0775</span> root system</span><br><span class="line">    </span><br><span class="line">on init</span><br><span class="line">    ...</span><br><span class="line">    mkdir /sys/fs/cgroup/memory <span class="number">0750</span> root system</span><br><span class="line">    ...</span><br><span class="line"></span><br><span class="line">on late-init</span><br><span class="line">    ..</span><br><span class="line">    <span class="comment">//涉及main、late_start任务注册，但是不会先于onboot执行，</span></span><br><span class="line">    <span class="comment">//因为他里边只是注册，执行顺序还是在execute_one_command控制死的，同步执行</span></span><br><span class="line">    trigger fs </span><br><span class="line">    ..</span><br><span class="line">    <span class="comment">//执行on boot</span></span><br><span class="line">    trigger boot </span><br><span class="line"></span><br><span class="line">on boot</span><br><span class="line">    ..</span><br><span class="line">    class_start core <span class="comment">//启动core类型的所有服务进程</span></span><br></pre></td></tr></table></figure>
+
+<p>上边我们看到了如何执行到core类型服务的了</p>
+<ul>
+<li>init.cpp <ul>
+<li>-&gt; main() <ul>
+<li>-&gt; action_for_each_trigger(“late-init”)<ul>
+<li>-&gt; 执行init.rc文件<ul>
+<li>on late-init <ul>
+<li>-&gt; on boot<ul>
+<li>-&gt; class_start core</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<h5 id="2-那么main、late-start类型的服务进程在哪执行的呢？"><a href="#2-那么main、late-start类型的服务进程在哪执行的呢？" class="headerlink" title="2.那么main、late_start类型的服务进程在哪执行的呢？ "></a><span id="jump8_1_2_2">2.那么main、late_start类型的服务进程在哪执行的呢？ </span></h5><p>上边init.rc源码里</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">on late-init</span><br><span class="line">    ..</span><br><span class="line">    <span class="comment">//涉及main、late_start任务注册，但是不会先于onboot执行，</span></span><br><span class="line">    <span class="comment">//因为他里边只是注册，执行顺序还是在execute_one_command控制死的，同步执行</span></span><br><span class="line">    trigger fs </span><br><span class="line">    ..</span><br><span class="line">    <span class="comment">//执行on boot</span></span><br><span class="line">    trigger boot </span><br></pre></td></tr></table></figure>
+<p>trigger fs就是解开的题解：</p>
+<blockquote>
+<p>这个section一般在init.${ro.hardware}.rc中定义</p>
+</blockquote>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta"># init.$&#123;ro.hardware&#125;.rc</span></span><br><span class="line"></span><br><span class="line">on fs</span><br><span class="line">    ...    mount_all fstab</span><br></pre></td></tr></table></figure>
+<p>在“fs”section中会执行mount_all fstab命令。fstab是Android下比较重要的配置文件，它包含了系统在启动时挂载文件系统和存储设备的详细信息。对应的处理函数为：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="type">int</span> <span class="title function_">do_mount_all</span><span class="params">(<span class="type">int</span> nargs, <span class="type">char</span> **args)</span> &#123;</span><br><span class="line">    <span class="keyword">if</span> (ret == FS_MGR_MNTALL_DEV_NOT_ENCRYPTED) &#123;</span><br><span class="line">        ...</span><br><span class="line">        <span class="comment">// 这里就将&quot;nonencrypted&quot;中的操作加入到操作队列中，</span></span><br><span class="line">        <span class="comment">// 因为他里边只是注册，执行顺序还是在execute_one_command控制死的同步执行，所以还是会等on boot先执行完，再执行；</span></span><br><span class="line">        <span class="comment">//也就是执行顺序：core &gt; main &gt; late_start</span></span><br><span class="line">        action_for_each_trigger(<span class="string">&quot;nonencrypted&quot;</span>, action_add_queue_tail);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>至此就会执行到init.rc的on nonencrypted</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">on nonencrypted</span><br><span class="line">    class_start main</span><br><span class="line">    class_start late_start</span><br></pre></td></tr></table></figure>
+<p>也就是启动main、late_start两个类型的服务进程</p>
+<p>完整链路：</p>
+<ul>
+<li>init.cpp <ul>
+<li>-&gt; main() <ul>
+<li>-&gt; action_for_each_trigger(“late-init”)注册<ul>
+<li>-&gt; 执行init.rc文件<ul>
+<li>on late-init （init.rc文件）<ul>
+<li>-&gt; on fs （init.rc文件）<ul>
+<li>mount_all fstab —&gt; do_mount_all()方法执行<ul>
+<li>action_for_each_trigger(“nonencrypted”)注册<ul>
+<li>on nonencrypted （init.rc文件）<ul>
+<li>顺序②class_start main</li>
+<li>顺序③class_start late_start</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>-&gt; on boot （init.rc文件）<ul>
+<li>-&gt; 顺序①class_start core</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<h3 id="2、ServiceManager主函数"><a href="#2、ServiceManager主函数" class="headerlink" title="2、ServiceManager主函数"></a><span id="jump8_2">2、ServiceManager主函数</span></h3><p>ServiceManager是一个独立的可执行文件，在设备中的进程名称是<span style="color:red;">&#x2F;system&#x2F;bin&#x2F;servicemanager</span>，这个也是其可执行文件的路径。</p>
+<p>ServiceManager实现源码的位于这个路径：</p>
+<blockquote>
+<p>frameworks&#x2F;native&#x2F;cmds&#x2F;servicemanager&#x2F;</p>
+</blockquote>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B_14.jpg" alt="img"></p>
+<p>其main函数的主要内容如下：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line"><span class="type">int</span> <span class="title function_">main</span><span class="params">()</span></span><br><span class="line">&#123;</span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">binder_state</span> *<span class="title">bs</span>;</span></span><br><span class="line">    <span class="comment">//1、是打开Binder，并指定缓存大小为128k，比正常的binder 1016kb小一些</span></span><br><span class="line">    bs = binder_open(<span class="number">128</span>*<span class="number">1024</span>);</span><br><span class="line">    <span class="keyword">if</span> (!bs) &#123;</span><br><span class="line">        ALOGE(<span class="string">&quot;failed to open binder driver\n&quot;</span>);</span><br><span class="line">        <span class="keyword">return</span> <span class="number">-1</span>;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="comment">//2、把自己注册给binder驱动</span></span><br><span class="line">    <span class="keyword">if</span> (binder_become_context_manager(bs)) &#123;</span><br><span class="line">        ALOGE(<span class="string">&quot;cannot become context manager (%s)\n&quot;</span>, strerror(errno));</span><br><span class="line">        <span class="keyword">return</span> <span class="number">-1</span>;</span><br><span class="line">    &#125;</span><br><span class="line">    ...</span><br><span class="line">    <span class="comment">//3、开始轮询处理请求</span></span><br><span class="line">    binder_loop(bs, svcmgr_handler);</span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>这段代码很简单，主要做了三件事情：</p>
+<ul>
+<li>1、binder_open(128*1024); <ul>
+<li>是打开Binder，并指定缓存大小为128k，由于ServiceManager提供的接口很简单（下文会讲到），因此并不需要普通进程那么多（1M - 8K）的缓存</li>
+</ul>
+</li>
+<li>2、binder_become_context_manager(bs) <ul>
+<li>使自己成为Context Manager（上下文管理者）。这里的Context Manager是Binder驱动里面的名称，等同于ServiceManager。</li>
+<li>binder_become_context_manager的方法实现只有一行代码：ioctl(bs-&gt;fd, BINDER_SET_CONTEXT_MGR, 0); 看过Binder驱动部分解析的内容，这行代码应该很容易理解了；就是把自己注册给binder驱动的一个特殊位置，即handle&#x3D;0的位置</li>
+</ul>
+</li>
+<li>3、binder_loop(bs, svcmgr_handler); <ul>
+<li>是在循环执行，等待其他模块请求服务，addService、getService</li>
+</ul>
+</li>
+</ul>
+<p>service_manager.c中的实现与普通Binder服务的实现有些不一样：并没有通过继承接口类来实现，而是通过几个c语言的函数来完成了实现。这个文件中的主要方法如下：</p>
+<table>
+<thead>
+<tr>
+<th>方法名称</th>
+<th>方法说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>main</td>
+<td>可执行文件入口函数，刚刚已经做过说明</td>
+</tr>
+<tr>
+<td>svcmgr_handler</td>
+<td>请求的入口函数，类似于普通Binder服务的onTransact</td>
+</tr>
+<tr>
+<td>do_add_service</td>
+<td>注册一个Binder服务</td>
+</tr>
+<tr>
+<td>do_find_service</td>
+<td>通过名称查找一个已经注册的Binder服务</td>
+</tr>
+</tbody></table>
+<h3 id="3、svcinfo结构体，存储注册进来的Binder服务的实体"><a href="#3、svcinfo结构体，存储注册进来的Binder服务的实体" class="headerlink" title="3、svcinfo结构体，存储注册进来的Binder服务的实体"></a><span id="jump8_3">3、svcinfo结构体，存储注册进来的Binder服务的实体</span></h3><p>ServiceManager中，通过svcinfo结构体来描述已经注册的Binder服务</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">svcinfo</span></span></span><br><span class="line"><span class="class">&#123;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">svcinfo</span> *<span class="title">next</span>;</span> <span class="comment">//指向下一个服务，说明这玩意是个链表保存的</span></span><br><span class="line">    <span class="type">uint32_t</span> handle; <span class="comment">//句柄，对应可获取BBinder服务</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">binder_death</span> <span class="title">death</span>;</span></span><br><span class="line">    <span class="type">int</span> allow_isolated;</span><br><span class="line">    <span class="type">size_t</span> len;</span><br><span class="line">    <span class="type">uint16_t</span> name[<span class="number">0</span>]; <span class="comment">//addService()时注册的Binder服务名称，如power</span></span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+<ul>
+<li>next是一个指针，指向下一个服务，通过这个指针将所有服务串成了链表。</li>
+<li>handle是指向Binder服务的句柄，这个句柄是由Binder驱动翻译，指向了Binder服务的实体（参见驱动中：Binder中的“面向对象”）</li>
+<li>name是服务的名称。</li>
+</ul>
+<p>其实ServiceManager就像是个Map一样，用name-&gt;handle，来通过名字来找Binder服务</p>
+<h3 id="4、ServiceManager进程的特殊性：defaultServiceManager"><a href="#4、ServiceManager进程的特殊性：defaultServiceManager" class="headerlink" title="4、ServiceManager进程的特殊性：defaultServiceManager"></a><span id="jump8_4">4、ServiceManager进程的特殊性：defaultServiceManager</span></h3><p>普通的Binder服务我们需要通过ServiceManager来获取接口才能调用，那么ServiceManager的接口有如何获得呢？</p>
+<p>在libbinder中，提供了一个<strong>defaultServiceManager</strong> 方法来获取ServiceManager的Proxy，并且这个方法不需要传入参数。</p>
+<p>原因：Binder的实现中，为ServiceManager留了一个特殊的位置，不需要像普通服务那样通过标识去查找。<strong>defaultServiceManager</strong> 代码如下：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">sp&lt;IServiceManager&gt; <span class="title function_">defaultServiceManager</span><span class="params">()</span></span><br><span class="line">&#123;</span><br><span class="line">    <span class="keyword">if</span> (gDefaultServiceManager != <span class="literal">NULL</span>) <span class="keyword">return</span> gDefaultServiceManager;</span><br><span class="line"></span><br><span class="line">    &#123;</span><br><span class="line">        AutoMutex _l(gDefaultServiceManagerLock);</span><br><span class="line">        <span class="keyword">while</span> (gDefaultServiceManager == <span class="literal">NULL</span>) &#123;</span><br><span class="line">            gDefaultServiceManager = interface_cast&lt;IServiceManager&gt;(</span><br><span class="line">                ProcessState::self()-&gt;getContextObject(<span class="literal">NULL</span>));</span><br><span class="line">            <span class="keyword">if</span> (gDefaultServiceManager == <span class="literal">NULL</span>)</span><br><span class="line">                sleep(<span class="number">1</span>);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> gDefaultServiceManager;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a href="https://irving18.github.io">王征</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://irving18.github.io/2024/07/01/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&amp;ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B/">https://irving18.github.io/2024/07/01/Framework%E5%BC%80%E7%AF%871-Binder%E6%9C%BA%E5%88%B6%EF%BC%9A%E9%A9%B1%E5%8A%A8%E7%AF%87&amp;ServiceManager%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://irving18.github.io" target="_blank">Android高级直通车</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/Android%E8%BF%9B%E9%98%B6/">Android进阶</a><a class="post-meta__tags" href="/tags/Framework/">Framework</a><a class="post-meta__tags" href="/tags/Binder%E6%9C%BA%E5%88%B6/">Binder机制</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,twitter,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc/sharejs/dist/js/social-share.min.js" defer></script></div></div><div class="post-reward"><div class="reward-button"><i class="fas fa-qrcode"></i>赞助</div><div class="reward-main"><ul class="reward-all"><li class="reward-item"><a href="/img/wechat_pay.png" target="_blank"><img class="post-qr-code-img" src="/img/wechat_pay.png" alt="wechat"/></a><div class="post-qr-code-desc">wechat</div></li></ul></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2024/07/02/Framework%E5%BC%80%E7%AF%872-Binder%20%E6%9C%BA%E5%88%B6%EF%BC%9A%E4%BD%BF%E7%94%A8AIDL/" title="Framework开篇2-Binder 机制：使用AIDL"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">Framework开篇2-Binder 机制：使用AIDL</div></div><div class="info-2"><div class="info-item-1">目录 零、Binder可传递的参数类型 一、简单单向通信，带retrun （1）普通Binder和系统Binder的区别 （2）示例说明   二、双向通信，聊天 （1）原理：利用Binder可以传递IBinder对象的特性 （2）项目概述   三、Android 12适配，需要在客户端添加  零、Binder可传递的参数类型               参数类型       说明                       Binder对象       可以传递实现了 AIDL 接口的 Binder 对象。                 基本数据类型       包括 `int`, `long`, `boolean`, `float`, `double`, `char`, `byte`。                 String       字符串类型。                 CharSequence       字符序列接口，一般用作只读的字符串。                 Bundle       键值对集合，可以传递含有上述基本数据类型或其他...</div></div></div></a><a class="pagination-related" href="/2024/05/17/Dalvik&amp;ART/" title="Dalvik&amp;ART"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">Dalvik&ART</div></div><div class="info-2"><div class="info-item-1">...</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2024/07/02/Framework%E5%BC%80%E7%AF%872-Binder%20%E6%9C%BA%E5%88%B6%EF%BC%9A%E4%BD%BF%E7%94%A8AIDL/" title="Framework开篇2-Binder 机制：使用AIDL"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-02</div><div class="info-item-2">Framework开篇2-Binder 机制：使用AIDL</div></div><div class="info-2"><div class="info-item-1">目录 零、Binder可传递的参数类型 一、简单单向通信，带retrun （1）普通Binder和系统Binder的区别 （2）示例说明   二、双向通信，聊天 （1）原理：利用Binder可以传递IBinder对象的特性 （2）项目概述   三、Android 12适配，需要在客户端添加  零、Binder可传递的参数类型               参数类型       说明                       Binder对象       可以传递实现了 AIDL 接口的 Binder 对象。                 基本数据类型       包括 `int`, `long`, `boolean`, `float`, `double`, `char`, `byte`。                 String       字符串类型。                 CharSequence       字符序列接口，一般用作只读的字符串。                 Bundle       键值对集合，可以传递含有上述基本数据类型或其他...</div></div></div></a><a class="pagination-related" href="/2024/07/05/Framework%E5%BC%80%E7%AF%873-Binder%20%E6%9C%BA%E5%88%B6%EF%BC%9AC%E5%B1%82&java%E5%B1%82/" title="Framework开篇3-Binder 机制：C层&amp;java层"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-05</div><div class="info-item-2">Framework开篇3-Binder 机制：C层&amp;java层</div></div><div class="info-2"><div class="info-item-1">目录 一、Binder c层、java层结构 1、c层结构：BnInterface(服务端)&#x2F;BpInterface(客户端)；BBinder(服务端)&#x2F;BpBinder(客户端) 2、java层结构：Binder、BinderProxy   二、Binder的初始化 1、Binder的c层初始化 2、关于Binder传递数据的大小限制 3、与驱动的通信 4、数据包装器：Parcel 5、Framework层的Binder线程管理   三、C++ Binder服务举例 1、本地实现：Native端，即服务端 2、服务发布到ServiceManager 3、远程接口：Proxy端，即提供给客户端使用的 4、服务的获取，客户端从ServiceManager获取   四、java Binder服务举例 五、完整通信流程 六、总结 1、简述binder启动和通信过程 2、Binder启动、通信时序图 3、Binder通信时的基础参数  ① 控制类协议：如注册成ServiceManager ②...</div></div></div></a><a class="pagination-related" href="/2024/03/07/ANR%E6%9C%BA%E5%88%B6%E5%8E%9F%E7%90%86%E3%80%81%E8%A7%A3%E5%86%B3%E6%96%B9%E6%A1%88/" title="ANR机制原理、解决方案"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-03-07</div><div class="info-item-2">ANR机制原理、解决方案</div></div><div class="info-2"><div class="info-item-1">...</div></div></div></a><a class="pagination-related" href="/2024/05/17/Dalvik&ART/" title="Dalvik&amp;ART"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-05-17</div><div class="info-item-2">Dalvik&amp;ART</div></div><div class="info-2"><div class="info-item-1">...</div></div></div></a><a class="pagination-related" href="/2024/08/27/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-BroadCast%E4%BD%BF%E7%94%A8/" title="Framework四大组件篇-BroadCast使用"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-08-27</div><div class="info-item-2">Framework四大组件篇-BroadCast使用</div></div><div class="info-2"><div class="info-item-1">目录 一、广播接收 （1）静态注册 （2）动态注册 （3）接收优先级 （4）前台广播、后台广播   二、广播发送 （1）无序广播 （2）有序广播 给下游传输数据、中断广播   （3）粘性广播（异步广播） （4）粘性有序广播 （5）前台广播、后台广播   三、常用系统广播汇总 （1）开机广播 （2）网络状态广播 （3）电量变化   四、Interview常见问题 （1）广播的超时时间 （2）广播中想做耗时操作，应该怎么搞？    一、广播接收定义一个默认广播，用于接收广播消息； 12345678910111213class MyBroadCast : BroadcastReceiver() &#123;    companion object &#123;        val WZ_RECEIVER = &quot;com.wz.test.MyTestBroadCast&quot;    &#125;    override fun onReceive(context: Context, intent: Intent) &#123;       ...</div></div></div></a><a class="pagination-related" href="/2024/08/30/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-BroadCast%E5%8E%9F%E7%90%86%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-BroadCast原理源码分析"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-08-30</div><div class="info-item-2">Framework四大组件篇-BroadCast原理源码分析</div></div><div class="info-2"><div class="info-item-1"> AMS：http://aospxref.com/android-6.0.1_r9/xref/frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.javaAMN&#x2F;AMP：http://aospxref.com/android-6.0.1_r9/xref/frameworks/base/core/java/android/app/ActivityManagerNative.java  目录 一、总结先行 （1）广播处理机制？ （2）ANR：无序广播、有序广播？ （3）ANR时间：前台、后台？ （4）ANR：静态注册会有ANR吗？ （5）静态注册拉起进程？Android...</div></div></div></a></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">王征</div><div class="author-info-description"></div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">41</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">18</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">3</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/IRVING18"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="mailto:ivring18@163.com" target="_blank" title="Email"><i class="fas fa-envelope" style="color: #4a7dbe;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content"><span>Android开发者迈向<span style="color:red; weight:bold" >高级Android开发</span>的直通车，总结了各大面试考点！<span></br><span>一个通人性的博主，码字不易，用爱发电。希望大家多多支持。</span><img width="250px" src="/img/wechat_pay.png"></div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#%E7%9B%AE%E5%BD%95"><span class="toc-number">1.</span> <span class="toc-text">目录</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E3%80%81%E7%AE%80%E5%8D%95%E4%BB%8B%E7%BB%8DLinux-IPC%E8%BF%9B%E7%A8%8B%E9%80%9A%E8%AE%AF%E6%96%B9%E5%BC%8F"><span class="toc-number">1.1.</span> <span class="toc-text">一、简单介绍Linux IPC进程通讯方式</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1%E3%80%81%E5%88%86%E7%B1%BB"><span class="toc-number">1.1.1.</span> <span class="toc-text">1、分类</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2%E3%80%81%E7%AE%A1%E9%81%93%E3%80%81%E6%B6%88%E6%81%AF%E9%98%9F%E5%88%97"><span class="toc-number">1.1.2.</span> <span class="toc-text">2、管道、消息队列</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3%E3%80%81mmap"><span class="toc-number">1.1.3.</span> <span class="toc-text">3、mmap</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Binder%E7%9A%84%E4%BC%98%E5%8A%BF"><span class="toc-number">1.1.4.</span> <span class="toc-text">Binder的优势</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%8C%E3%80%81Binder-%E6%9E%B6%E6%9E%84"><span class="toc-number">1.2.</span> <span class="toc-text">二、Binder 架构</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1%E3%80%81%E6%95%B4%E4%BD%93%E6%9E%B6%E6%9E%84"><span class="toc-number">1.2.1.</span> <span class="toc-text">1、整体架构</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2%E3%80%81C-S%E6%A8%A1%E5%9E%8B"><span class="toc-number">1.2.2.</span> <span class="toc-text">2、C&#x2F;S模型</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%89%E3%80%81Binder%E9%A9%B1%E5%8A%A8"><span class="toc-number">1.3.</span> <span class="toc-text">三、Binder驱动</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1%E3%80%81%E9%A9%B1%E5%8A%A8%E4%BB%A3%E7%A0%81%E3%80%81%E5%90%AF%E5%8A%A8%E6%A6%82%E8%BF%B0"><span class="toc-number">1.3.1.</span> <span class="toc-text">1、驱动代码、启动概述</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#%E2%91%A0-binder-init%E5%87%BD%E6%95%B0"><span class="toc-number">1.3.1.1.</span> <span class="toc-text"> ① binder_init函数</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E2%91%A1-bmisc-register-binder-miscdev-%E5%90%91Linux%E5%86%85%E6%A0%B8%E6%B3%A8%E5%86%8Cbinder%E8%AE%BE%E5%A4%87%EF%BC%9Aopen%E3%80%81mmap%E3%80%81ioctl"><span class="toc-number">1.3.1.2.</span> <span class="toc-text"> ② bmisc_register(&amp;binder_miscdev);向Linux内核注册binder设备：open、mmap、ioctl</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2%E3%80%81%E9%A9%B1%E5%8A%A8%E4%B8%BB%E8%A6%81%E7%BB%93%E6%9E%84"><span class="toc-number">1.3.2.</span> <span class="toc-text">2、驱动主要结构</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#%E2%91%A0-%E4%B8%8E%E7%94%A8%E6%88%B7%E7%A9%BA%E9%97%B4%E5%85%B1%E7%94%A8%E7%9A%84%EF%BC%8C%E7%94%A8%E4%BA%8E%E9%80%9A%E4%BF%A1"><span class="toc-number">1.3.2.1.</span> <span class="toc-text"> ① 与用户空间共用的，用于通信</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E2%91%A1-Binder%E9%A9%B1%E5%8A%A8%E5%86%85%E9%83%A8%E5%AE%9E%E7%8E%B0%E8%BF%87%E7%A8%8B%E4%B8%AD%E9%9C%80%E8%A6%81%E7%9A%84"><span class="toc-number">1.3.2.2.</span> <span class="toc-text"> ② Binder驱动内部实现过程中需要的</span></a></li></ol></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%9B%9B%E3%80%81BInder%E9%80%9A%E4%BF%A1"><span class="toc-number">1.4.</span> <span class="toc-text">四、BInder通信</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1%E3%80%81BInder%E5%8D%8F%E8%AE%AE"><span class="toc-number">1.4.1.</span> <span class="toc-text">1、BInder协议</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#%E2%91%A0-%E6%8E%A7%E5%88%B6%E7%B1%BB%E5%8D%8F%E8%AE%AE%EF%BC%9A%E5%A6%82%E6%B3%A8%E5%86%8C%E6%88%90ServiceManager"><span class="toc-number">1.4.1.1.</span> <span class="toc-text"> ① 控制类协议：如注册成ServiceManager</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E2%91%A1-%E9%A9%B1%E5%8A%A8%E7%B1%BB%E5%8D%8F%E8%AE%AE%EF%BC%9ABC-BR"><span class="toc-number">1.4.1.2.</span> <span class="toc-text"> ② 驱动类协议：BC&#x2F;BR</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2%E3%80%81Binder%E9%80%9A%E4%BF%A1%E8%BF%87%E7%A8%8B"><span class="toc-number">1.4.2.</span> <span class="toc-text">2、Binder通信过程</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AD%E3%80%81open-driver-%E6%89%93%E5%BC%80%E9%A9%B1%E5%8A%A8%E8%BF%87%E7%A8%8B"><span class="toc-number">1.5.</span> <span class="toc-text">六、open_driver()打开驱动过程</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1%E3%80%81binder-open-%E6%89%93%E5%BC%80Binder%E8%AE%BE%E5%A4%87"><span class="toc-number">1.5.1.</span> <span class="toc-text">1、binder_open() 打开Binder设备</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2%E3%80%81mmap%E5%86%85%E5%AD%98%E6%98%A0%E5%B0%84"><span class="toc-number">1.5.2.</span> <span class="toc-text">2、mmap内存映射</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3%E3%80%81%E5%86%85%E5%AD%98%E7%9A%84%E7%AE%A1%E7%90%86"><span class="toc-number">1.5.3.</span> <span class="toc-text">3、内存的管理</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4%E3%80%81%E9%A9%B1%E5%8A%A8%E5%B1%82%E7%BA%BF%E7%A8%8B%E7%AE%A1%E7%90%86"><span class="toc-number">1.5.4.</span> <span class="toc-text">4、驱动层线程管理</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AD%E3%80%81Binder%E4%B8%AD%E7%9A%84%E2%80%9C%E9%9D%A2%E5%90%91%E5%AF%B9%E8%B1%A1%E2%80%9D"><span class="toc-number">1.6.</span> <span class="toc-text">六、Binder中的“面向对象”</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%83%E3%80%81ServiceManager%E6%B3%A8%E5%86%8C%E3%80%81%E8%8E%B7%E5%8F%96"><span class="toc-number">1.7.</span> <span class="toc-text">七、ServiceManager注册、获取</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AB%E3%80%81ServiceManager%E5%AE%8C%E6%95%B4%E7%9A%84%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B"><span class="toc-number">1.8.</span> <span class="toc-text">八、ServiceManager完整的启动流程</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1%E3%80%81init-cpp%E3%80%81init-rc%E5%90%AF%E5%8A%A8ServiceManager"><span class="toc-number">1.8.1.</span> <span class="toc-text">1、init.cpp、init.rc启动ServiceManager</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#%EF%BC%88%E4%B8%80%EF%BC%89init-rc%EF%BC%9A%E6%A0%87%E8%AF%86core%E3%80%81main%E3%80%81late-start%E7%B1%BB%E5%9E%8B%E6%9C%8D%E5%8A%A1"><span class="toc-number">1.8.1.1.</span> <span class="toc-text">（一）init.rc：标识core、main、late_start类型服务 </span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%EF%BC%88%E4%BA%8C%EF%BC%89init-cpp"><span class="toc-number">1.8.1.2.</span> <span class="toc-text">（二）init.cpp </span></a><ol class="toc-child"><li class="toc-item toc-level-5"><a class="toc-link" href="#1-core%E7%B1%BB%E5%9E%8B%E7%9A%84%E6%9C%8D%E5%8A%A1%E8%BF%9B%E7%A8%8B%E6%98%AF%E6%80%8E%E4%B9%88%E6%89%A7%E8%A1%8C%E7%9A%84%E5%91%A2%EF%BC%9F"><span class="toc-number">1.8.1.2.1.</span> <span class="toc-text">1.core类型的服务进程是怎么执行的呢？ </span></a></li><li class="toc-item toc-level-5"><a class="toc-link" href="#2-%E9%82%A3%E4%B9%88main%E3%80%81late-start%E7%B1%BB%E5%9E%8B%E7%9A%84%E6%9C%8D%E5%8A%A1%E8%BF%9B%E7%A8%8B%E5%9C%A8%E5%93%AA%E6%89%A7%E8%A1%8C%E7%9A%84%E5%91%A2%EF%BC%9F"><span class="toc-number">1.8.1.2.2.</span> <span class="toc-text">2.那么main、late_start类型的服务进程在哪执行的呢？ </span></a></li></ol></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2%E3%80%81ServiceManager%E4%B8%BB%E5%87%BD%E6%95%B0"><span class="toc-number">1.8.2.</span> <span class="toc-text">2、ServiceManager主函数</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3%E3%80%81svcinfo%E7%BB%93%E6%9E%84%E4%BD%93%EF%BC%8C%E5%AD%98%E5%82%A8%E6%B3%A8%E5%86%8C%E8%BF%9B%E6%9D%A5%E7%9A%84Binder%E6%9C%8D%E5%8A%A1%E7%9A%84%E5%AE%9E%E4%BD%93"><span class="toc-number">1.8.3.</span> <span class="toc-text">3、svcinfo结构体，存储注册进来的Binder服务的实体</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4%E3%80%81ServiceManager%E8%BF%9B%E7%A8%8B%E7%9A%84%E7%89%B9%E6%AE%8A%E6%80%A7%EF%BC%9AdefaultServiceManager"><span class="toc-number">1.8.4.</span> <span class="toc-text">4、ServiceManager进程的特殊性：defaultServiceManager</span></a></li></ol></li></ol></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/20/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service%EF%BC%9AstartService%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-Service：startService源码分析">Framework四大组件篇-Service：startService源码分析</a><time datetime="2024-09-20T07:40:47.000Z" title="发表于 2024-09-20 15:40:47">2024-09-20</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/17/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service%EF%BC%9AbindService%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-Service：bindService源码分析">Framework四大组件篇-Service：bindService源码分析</a><time datetime="2024-09-17T07:40:36.000Z" title="发表于 2024-09-17 15:40:36">2024-09-17</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/16/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service1%E4%BD%BF%E7%94%A8%E7%AF%87/" title="Framework四大组件篇-Service1使用篇">Framework四大组件篇-Service1使用篇</a><time datetime="2024-09-16T07:40:35.000Z" title="发表于 2024-09-16 15:40:35">2024-09-16</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/07/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-ContentProvider%E5%90%AF%E5%8A%A8%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-ContentProvider启动源码分析">Framework四大组件篇-ContentProvider启动源码分析</a><time datetime="2024-09-07T07:39:36.000Z" title="发表于 2024-09-07 15:39:36">2024-09-07</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/08/30/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-BroadCast%E5%8E%9F%E7%90%86%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-BroadCast原理源码分析">Framework四大组件篇-BroadCast原理源码分析</a><time datetime="2024-08-30T07:40:05.000Z" title="发表于 2024-08-30 15:40:05">2024-08-30</time></div></div></div></div></div></div></main><footer id="footer" style="background-image: url(/img/bg.png);"><div id="footer-wrap"><div class="copyright">&copy;2024 By 王征</div><div class="footer_custom_text"><a href=""><img class="icp-icon" src="/img/avatar.jpg"><span>一个通人性的博主</span></a></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js"></script><script src="/js/main.js"></script><div class="js-pjax"></div><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></div></body></html>

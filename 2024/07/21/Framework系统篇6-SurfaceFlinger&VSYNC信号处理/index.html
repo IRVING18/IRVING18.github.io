@@ -1,0 +1,629 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="light"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>Framework系统篇6-SurfaceFlinger&amp;VSYNC信号处理 | Android高级直通车</title><meta name="author" content="王征"><meta name="copyright" content="王征"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="ffffff"><meta name="description" content="努比亚技术团队：https:&#x2F;&#x2F;www.jianshu.com&#x2F;p&#x2F;f96ab6646ae3 https:&#x2F;&#x2F;www.androidperformance.com&#x2F;2021&#x2F;04&#x2F;24&#x2F;android-systrace-smooth-in-action-1&#x2F;#&#x2F;%E4%BA%86%E8%A7%A3%E5%8D%A1%E9%A1%BF%E5%8E%9F%E7%90%86 Surface系统变化说明">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Framework系统篇6-SurfaceFlinger&amp;VSYNC信号处理">
+<meta property="og:url" content="https://irving18.github.io/2024/07/21/Framework%E7%B3%BB%E7%BB%9F%E7%AF%876-SurfaceFlinger&VSYNC%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86/index.html">
+<meta property="og:site_name" content="Android高级直通车">
+<meta property="og:description" content="努比亚技术团队：https:&#x2F;&#x2F;www.jianshu.com&#x2F;p&#x2F;f96ab6646ae3 https:&#x2F;&#x2F;www.androidperformance.com&#x2F;2021&#x2F;04&#x2F;24&#x2F;android-systrace-smooth-in-action-1&#x2F;#&#x2F;%E4%BA%86%E8%A7%A3%E5%8D%A1%E9%A1%BF%E5%8E%9F%E7%90%86 Surface系统变化说明">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://irving18.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2024-07-21T07:38:42.000Z">
+<meta property="article:modified_time" content="2024-12-27T09:05:44.099Z">
+<meta property="article:author" content="王征">
+<meta property="article:tag" content="Android进阶">
+<meta property="article:tag" content="Framework">
+<meta property="article:tag" content="系统服务">
+<meta property="article:tag" content="SurfaceFlinger">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://irving18.github.io/img/avatar.jpg"><link rel="shortcut icon" href="/img/avatar.jpg"><link rel="canonical" href="https://irving18.github.io/2024/07/21/Framework%E7%B3%BB%E7%BB%9F%E7%AF%876-SurfaceFlinger&amp;VSYNC%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', 'ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: undefined,
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":true},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyload: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: 'Framework系统篇6-SurfaceFlinger&VSYNC信号处理',
+  isPost: true,
+  isHome: false,
+  isHighlightShrink: false,
+  isToc: true,
+  isShuoshuo: false
+}</script><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="onerror=null;src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">41</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">18</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">3</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 文章</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg" id="page-header" style="background-image: url(/img/bg.png);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">Android高级直通车</span></a><a class="nav-page-title" href="/"><span class="site-name">Framework系统篇6-SurfaceFlinger&amp;VSYNC信号处理</span></a></span><div id="menus"><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 文章</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">Framework系统篇6-SurfaceFlinger&amp;VSYNC信号处理</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2024-07-21T07:38:42.000Z" title="发表于 2024-07-21 15:38:42">2024-07-21</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2024-12-27T09:05:44.099Z" title="更新于 2024-12-27 17:05:44">2024-12-27</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/Android%E8%BF%9B%E9%98%B6/">Android进阶</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">6k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>23分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><ul>
+<li>努比亚技术团队：<a target="_blank" rel="noopener" href="https://www.jianshu.com/p/f96ab6646ae3">https://www.jianshu.com/p/f96ab6646ae3</a></li>
+<li><a target="_blank" rel="noopener" href="https://www.androidperformance.com/2021/04/24/android-systrace-smooth-in-action-1/#/%E4%BA%86%E8%A7%A3%E5%8D%A1%E9%A1%BF%E5%8E%9F%E7%90%86">https://www.androidperformance.com/2021/04/24/android-systrace-smooth-in-action-1/#/%E4%BA%86%E8%A7%A3%E5%8D%A1%E9%A1%BF%E5%8E%9F%E7%90%86</a></li>
+<li>Surface系统变化说明 <a target="_blank" rel="noopener" href="https://blog.csdn.net/Innost/article/details/7760310?spm=1001.2014.3001.5502">https://blog.csdn.net/Innost/article/details/7760310?spm=1001.2014.3001.5502</a></li>
+<li><a target="_blank" rel="noopener" href="https://www.51cto.com/article/711220.html">https://www.51cto.com/article/711220.html</a></li>
+<li>深入Android卷I</li>
+</ul>
+<h1 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h1><ul>
+<li><a href="#jump1">一、SurfaceFlinger介绍</a><ul>
+<li><a href="#jump1_1">（1）SurfaceFlinger的作用</a></li>
+<li><a href="#jump1_2">（2）SurfaceFlinger、Surface、Activity的关系</a></li>
+</ul>
+</li>
+<li><a href="#jump3">二、Surface基础知识</a><ul>
+<li><a href="#jump3_1">（1）FrameBuffer</a></li>
+<li><a href="#jump3_2">（2）PageFipping：双缓冲机制</a></li>
+<li><a href="#jump3_3">（3）BufferQueue</a></li>
+</ul>
+</li>
+<li><a href="#jump2">三、Activity绘制流程performTravesals()中：Surface的创建过程</a></li>
+<li><a href="#jump4">四、SurfaceFlinger 启动过程</a><ul>
+<li><a href="#jump4_1">（1）init.rc core class类型 &#x3D;&gt; main函数</a></li>
+<li><a href="#jump4_3">（2）new SurfaceFlinger对象创建</a><ul>
+<li><a href="#jump4_3_1">1、SurfaceFlinger::onFirstRef()</a></li>
+<li><a href="#jump4_3_2">2、MessageQueue::init() 初始Handler、队列用于处理异步消息</a></li>
+</ul>
+</li>
+<li><a href="#jump4_4">（3）SurfaceFlinger::init()初始化</a><ul>
+<li><a href="#jump4_4_1">1、初始化硬件HWComposer对象：通过GPU合成图像；注册VSYNC信号回调</a></li>
+<li><a href="#jump4_4_2">2、初始化非虚拟显示屏：创建BufferQueue，用于和显示设备DisplayDevice，进行展示图像展示的连接</a></li>
+<li><a href="#jump4_4_3">3、创建两个EventThread 分发VSYNC信号：绘制(app)、绘制(sf自己)</a></li>
+<li><a href="#jump4_4_4">4、设置EventThread给MessageQueue，监听处理VSYNC信号回调</a></li>
+<li><a href="#jump4_4_5">4、startBootAnim开机动画</a></li>
+</ul>
+</li>
+<li><a href="#jump4_6">（4）SurfaceFlinger.run循环等待处理消息</a></li>
+<li><a href="#jump4_5">（5）SurfaceFlinger包含几个线程？</a></li>
+</ul>
+</li>
+<li><a href="#jump5">五、SurfaceFlinger VSYNC信号处理流程</a><ul>
+<li><a href="#jump5_0">（0）主时序图，总结先行</a></li>
+<li><a href="#jump5_1">（1）HWComposer::hook_vsync() 接受底层硬件VSYNC信号回调</a></li>
+<li><a href="#jump5_2">（2）SurfaceFlinger::onVSyncReceived() 回调到SF方法</a></li>
+<li><a href="#jump5_3">（3）DispSync::addResyncSample() 将硬件VSYNC处理，并转化成一个虚拟的VSYNC信号源。</a></li>
+<li><a href="#jump5_4">（4）DispSyncSource::onDispSyncEvent() 信号源对象承接回调；</a></li>
+<li><a href="#jump5_5">（5）EventThread::onVSyncEvent() 回调到VSYNC信号分发线程；</a></li>
+<li><a href="#jump5_6">（6）DisplayEventReceiver::sendEvents() 回调给MessageQueue</a></li>
+<li><a href="#jump5_7">（7）MessageQueue::cb_eventReceiver() 分发VYSNC信号</a></li>
+</ul>
+</li>
+<li><a href="#jump6">六、SurfaceFlinger 绘制流程</a><ul>
+<li><a href="#jump6_0">（0）总结先行</a> </li>
+<li><a href="#jump6_1">（1）handleMessageRefresh()由VSYNC信号触发调用</a></li>
+<li><a href="#jump6_2">（2）preComposition：根据上次绘制的图层中是否有更新，来决定是否执行invalidate过程；</a></li>
+<li><a href="#jump6_3">（3）rebuildLayerStacks：重建每个显示屏的所有可见Layer列表；</a> </li>
+<li><a href="#jump6_4">（4）setUpHWComposer：更新HWComposer的图层</a> </li>
+<li><a href="#jump6_5">（5）doComposition：合成所有图层的图像</a> </li>
+<li><a href="#jump6_6">（6）postComposition：回调每个layer的onPostComposition。</a></li>
+</ul>
+</li>
+<li><a href="#jump7">七、Choreography接收SurfaceFlinger的VSYNC信号</a></li>
+<li><a href="#jump8">八、面试总结</a><ul>
+<li><a href="#jump8_1">（1）讲讲SurfaceFlinger在Activity绘制过程的作用？</a></li>
+<li><a href="#jump8_2">（2）BufferQueue怎么保障线程安全的呢?</a></li>
+</ul>
+</li>
+</ul>
+<h2 id="一、SurfaceFlinger介绍"><a href="#一、SurfaceFlinger介绍" class="headerlink" title="一、SurfaceFlinger介绍"></a><span id="jump1"/>一、SurfaceFlinger介绍</h2><h2 id="（1）SurfaceFlinger的作用"><a href="#（1）SurfaceFlinger的作用" class="headerlink" title="（1）SurfaceFlinger的作用"></a><span id="jump1_1"/>（1）SurfaceFlinger的作用</h2><ul>
+<li>1、监听HWComposer硬件的VSYNC信号，并通过DIspSync处理成更规则的虚拟VSYNC信号，分发给监听者：App、SF自己</li>
+<li>2、监听到VSYNC信号后，读取BufferQueue的数据（即App写入的view node的绘制数据），进行所有Surface的图层合成；最后生成Frame</li>
+<li>3、将合成后的Frame写入FrameBuffer中，提供给Device显示硬件进行展示；</li>
+</ul>
+<h2 id="（2）SurfaceFlinger、Surface、Activity的关系"><a href="#（2）SurfaceFlinger、Surface、Activity的关系" class="headerlink" title="（2）SurfaceFlinger、Surface、Activity的关系"></a><span id="jump1_2"/>（2）SurfaceFlinger、Surface、Activity的关系</h2><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%876-SurfaceFlinger&VSYNC%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86_1.jpg" alt="image.png"></p>
+<p>先看左图：</p>
+<ul>
+<li>Skia绘制二维 </li>
+<li>OpenGL绘制三维</li>
+<li>都会最终绘制到Surface上<blockquote>
+<p>实际代码中：</p>
+<ul>
+<li>1、ViewRootImpl会创建Surface并持有</li>
+<li>2、通过WMS关联到SurfaceFlinger上</li>
+</ul>
+</blockquote>
+</li>
+</ul>
+<p>再看右图</p>
+<ul>
+<li>1、Surface向SurfaceFlinger通过FrameBuffer提供数据</li>
+<li>2、SurfaceFlinger混合图像</li>
+<li>3、输出到“虚拟设备地址”在&#x2F;dev&#x2F;fb%d 目录下，就等于显示到真实Device上了；因为硬件产商会读取虚拟设备地址的数据进行展示；</li>
+</ul>
+<h2 id="二、Surface基础知识"><a href="#二、Surface基础知识" class="headerlink" title="二、Surface基础知识"></a><span id="jump3"/>二、Surface基础知识</h2><h3 id="（1）FrameBuffer"><a href="#（1）FrameBuffer" class="headerlink" title="（1）FrameBuffer"></a><span id="jump3_1"/>（1）FrameBuffer</h3><p>FrameBuffer：帧缓冲区</p>
+<ul>
+<li>用来存储图形&#x2F;图像帧数据的缓冲区；</li>
+<li>数据来自Linux下虚拟显示设备FrameBuffer Device</li>
+</ul>
+<p>FrameBuffer Device：虚拟显示设备</p>
+<ul>
+<li>虚拟设备地址在&#x2F;dev&#x2F;fb%d 目录下，如：&#x2F;dev&#x2F;fb0 对应第一个真实Device0；</li>
+<li>各个硬件厂商的真实设备就以这个框架来处理输入&#x2F;输出；</li>
+<li>这样应用层就可以直接通过这个虚拟设备作为中间层来进行图形&#x2F;图像的输入输出了；</li>
+</ul>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%876-SurfaceFlinger&VSYNC%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86_2.jpg" alt="image.png"></p>
+<p>如图中所示，</p>
+<ul>
+<li>应用层通过mmap写入FrameBuffer数据层，就等于写入到FrameBuffer Device上了；</li>
+<li>真实的现实设备会实时读取FrameBuffer的数据绘制显示出来；</li>
+<li>这样应用层写入FrameBuffer就等于在屏幕上绘制了；</li>
+</ul>
+<h3 id="（2）PageFipping：双缓冲机制"><a href="#（2）PageFipping：双缓冲机制" class="headerlink" title="（2）PageFipping：双缓冲机制"></a><span id="jump3_2"/>（2）PageFipping：双缓冲机制</h3><ul>
+<li>FrontBuffer 前缓冲</li>
+<li>BackBuffer 后缓冲</li>
+<li>消费者使用FrontBuffer的旧数据，生产者用BackBuffer写新数据；相互不干扰</li>
+<li>当需要更新画面时直接交换FrontBuffer和BackBuffer</li>
+</ul>
+<h3 id="（3）BufferQueue"><a href="#（3）BufferQueue" class="headerlink" title="（3）BufferQueue"></a><span id="jump3_3"/>（3）BufferQueue</h3><ul>
+<li>是存储Surface数据的，用于App和SF数据交互</li>
+<li>App将view经OpenGL、Skia渲染的数据存入BufferQueue中；</li>
+<li>SurfaceFlinger，在VSYNC信号到时，读取BufferQueue数据，进一步处理成Frame，然后放入FrameBuffer中；</li>
+</ul>
+<h2 id="三、Activity绘制流程performTravesals-中：Surface的创建过程"><a href="#三、Activity绘制流程performTravesals-中：Surface的创建过程" class="headerlink" title="三、Activity绘制流程performTravesals()中：Surface的创建过程"></a><span id="jump2"/>三、Activity绘制流程performTravesals()中：Surface的创建过程</h2><p>在Activity启动流程中，performTraversals()里，创建的Surface；<br>App进程最后再draw()方法后，调用RenderThread的draw方法</p>
+<ul>
+<li><p>updateRootDisplayList将view创建成node节点</p>
+</li>
+<li><p>syncAndDrawFrame 将节点通过OpenGL渲染后，最终会写入Surface中去；</p>
+</li>
+<li><p>【（1）ViewRootImpl】</p>
+<ul>
+<li>#mSurface &#x3D; new Surface() 默认创建持有Surface对象</li>
+<li>#performTraversals()<ul>
+<li>#relayoutWindow(mSurface)<ul>
+<li>mWindowSession.relayout(mSurface) <ul>
+<li>mWindowSession是WMS的BpBinder;</li>
+<li>实际代码在com.android.server.wm.Session extends IWindowSession.Stub</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p>【（2）IWindowSession】在session中调用</p>
+<ul>
+<li>mService.relayoutWindow(mSurface)即调用回WMS的relayoutWindow()</li>
+</ul>
+</li>
+<li><p>【（3）WMS】</p>
+<ul>
+<li>relayoutWindow(outSuface &#x3D; mSurface) 到这就将Activity的Surface对象传递到WMS了，在WMS中参数名叫outSurface<ul>
+<li>surface &#x3D; winState#createSurfaceLoced() 创建一个新的surface</li>
+<li>outsurface.copyFrom(surface) 将新创建的surface拷贝给Activity的Surface上；</li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p>【（4）WindowState】</p>
+<ul>
+<li>#createSurfaceLoced()<ul>
+<li>surface &#x3D; new Surface(mSurfaceSession)</li>
+<li>surface.openTransaction()开启事务处理</li>
+<li>surface.closeTransaction()关闭事务</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%876-SurfaceFlinger&VSYNC%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86_3.jpg" alt="image.png"></p>
+<p>Surface从WMS创建传回Activity的Binder通讯过程</p>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%876-SurfaceFlinger&VSYNC%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86_4.jpg" alt="image.png"></p>
+<h2 id="四、SurfaceFlinger-启动过程"><a href="#四、SurfaceFlinger-启动过程" class="headerlink" title="四、SurfaceFlinger 启动过程"></a><span id="jump4"/>四、SurfaceFlinger 启动过程</h2><h3 id="（1）init-rc-core-class类型-main函数"><a href="#（1）init-rc-core-class类型-main函数" class="headerlink" title="（1）init.rc core class类型 &#x3D;&gt; main函数"></a><span id="jump4_1"/>（1）init.rc core class类型 &#x3D;&gt; main函数</h3><p>在“系统启动流程”中已经介绍过Servicemanager启动过程；</p>
+<p>SurfaceFlinger也是core类型的一员，和ServiceManager一样最先被启动；</p>
+<ul>
+<li>服务分类为core &gt; main &gt; late_start<ul>
+<li>core：ServiceManager、surfaceflinger、debuggerd。。</li>
+<li>main：zygoet、media。。</li>
+<li>late_start：cmd_services、一般系统定制的服务会放在这</li>
+</ul>
+</li>
+</ul>
+<p>由init.cpp启动core调用到sf的main方法：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line">#main_surfaceflinger.<span class="function">cpp</span></span><br><span class="line"><span class="function"><span class="type">int</span> <span class="title">main</span><span class="params">(<span class="type">int</span>, <span class="type">char</span>**)</span> </span>&#123;</span><br><span class="line">    <span class="comment">//1、创建Binder线程池，处理数据，最大线程4</span></span><br><span class="line">    ProcessState::<span class="built_in">self</span>()-&gt;<span class="built_in">setThreadPoolMaxThreadCount</span>(<span class="number">4</span>);</span><br><span class="line">    ps-&gt;<span class="built_in">startThreadPool</span>();</span><br><span class="line"></span><br><span class="line">    <span class="comment">//2、实例化surfaceflinger【见（3）SurfaceFlinger初始化】</span></span><br><span class="line">    sp&lt;SurfaceFlinger&gt; flinger =  <span class="keyword">new</span> <span class="built_in">SurfaceFlinger</span>();</span><br><span class="line">    flinger-&gt;<span class="built_in">init</span>();</span><br><span class="line"></span><br><span class="line">    <span class="comment">//3、发布surface flinger，注册到Service Manager</span></span><br><span class="line">    <span class="function">sp&lt;IServiceManager&gt; <span class="title">sm</span><span class="params">(defaultServiceManager())</span></span>;</span><br><span class="line">    sm-&gt;<span class="built_in">addService</span>(<span class="built_in">String16</span>(SurfaceFlinger::<span class="built_in">getServiceName</span>()), flinger, <span class="literal">false</span>);</span><br><span class="line"></span><br><span class="line">    <span class="comment">//4、运行在当前线程【（6）SurfaceFlinger.run循环等待处理消息】</span></span><br><span class="line">    flinger-&gt;<span class="built_in">run</span>();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h3 id="（2）new-SurfaceFlinger对象创建"><a href="#（2）new-SurfaceFlinger对象创建" class="headerlink" title="（2）new SurfaceFlinger对象创建"></a><span id="jump4_3"/>（2）new SurfaceFlinger对象创建</h3><h4 id="1、SurfaceFlinger-onFirstRef"><a href="#1、SurfaceFlinger-onFirstRef" class="headerlink" title="1、SurfaceFlinger::onFirstRef()"></a><span id="jump4_3_1"/>1、SurfaceFlinger::onFirstRef()</h4><figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"># SurfaceFlinger.<span class="function">cpp</span></span><br><span class="line"><span class="function"><span class="title">SurfaceFlinger::SurfaceFlinger</span><span class="params">()</span></span></span><br><span class="line"><span class="function">    :   BnSurfaceComposer(),</span></span><br><span class="line"><span class="function">        mHWVsyncAvailable(false),</span></span><br><span class="line"><span class="function">        。。。</span></span><br><span class="line"><span class="function">&#123;</span>&#125;</span><br></pre></td></tr></table></figure>
+<p>SurfaceFlinger继承于BnSurfaceComposer,IBinder::DeathRecipient,HWComposer::EventHandler</p>
+<p>所以，当首次被强指针引用时则执行OnFirstRef()</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">SurfaceFlinger::onFirstRef</span><span class="params">()</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    mEventQueue.<span class="built_in">init</span>(<span class="keyword">this</span>);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h4 id="2、MessageQueue-init-初始Handler、队列用于处理异步消息"><a href="#2、MessageQueue-init-初始Handler、队列用于处理异步消息" class="headerlink" title="2、MessageQueue::init() 初始Handler、队列用于处理异步消息"></a><span id="jump4_3_2"/>2、MessageQueue::init() 初始Handler、队列用于处理异步消息</h4><figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br></pre></td><td class="code"><pre><span class="line"># MessageQueue.<span class="function">cpp</span></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">MessageQueue::init</span><span class="params">(<span class="type">const</span> sp&lt;SurfaceFlinger&gt;&amp; flinger)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    mFlinger = flinger;</span><br><span class="line">    mLooper = <span class="keyword">new</span> <span class="built_in">Looper</span>(<span class="literal">true</span>);</span><br><span class="line">    mHandler = <span class="keyword">new</span> <span class="built_in">Handler</span>(*<span class="keyword">this</span>); <span class="comment">//【见小节2.2.3】</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">class</span> <span class="title class_">MessageQueue</span> &#123;</span><br><span class="line">    <span class="keyword">class</span> <span class="title class_">Handler</span> : <span class="keyword">public</span> MessageHandler &#123;</span><br><span class="line">        <span class="keyword">enum</span> &#123;</span><br><span class="line">            eventMaskInvalidate     = <span class="number">0x1</span>,</span><br><span class="line">            eventMaskRefresh        = <span class="number">0x2</span>,</span><br><span class="line">            eventMaskTransaction    = <span class="number">0x4</span></span><br><span class="line">        &#125;;</span><br><span class="line">        MessageQueue&amp; mQueue;</span><br><span class="line">        <span class="type">int32_t</span> mEventMask;</span><br><span class="line">    <span class="keyword">public</span>:</span><br><span class="line">        <span class="built_in">Handler</span>(MessageQueue&amp; queue) : <span class="built_in">mQueue</span>(queue), <span class="built_in">mEventMask</span>(<span class="number">0</span>) &#123; &#125;</span><br><span class="line">        <span class="function"><span class="keyword">virtual</span> <span class="type">void</span> <span class="title">handleMessage</span><span class="params">(<span class="type">const</span> Message&amp; message)</span></span>;</span><br><span class="line">        <span class="function"><span class="type">void</span> <span class="title">dispatchRefresh</span><span class="params">()</span></span>;</span><br><span class="line">        <span class="function"><span class="type">void</span> <span class="title">dispatchInvalidate</span><span class="params">()</span></span>;</span><br><span class="line">        <span class="function"><span class="type">void</span> <span class="title">dispatchTransaction</span><span class="params">()</span></span>;</span><br><span class="line">    &#125;;</span><br><span class="line">    ...</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="（3）SurfaceFlinger-init-初始化"><a href="#（3）SurfaceFlinger-init-初始化" class="headerlink" title="（3）SurfaceFlinger::init()初始化"></a><span id="jump4_4"/>（3）SurfaceFlinger::init()初始化</h3><p>上边main函数调用这个方法：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">SurfaceFlinger::init</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    <span class="comment">// 1、初始化硬件composer对象【见小节 1、初始化硬件HwComposer对象】</span></span><br><span class="line">    mHwc = <span class="keyword">new</span> <span class="built_in">HWComposer</span>(<span class="keyword">this</span>, *<span class="built_in">static_cast</span>&lt;HWComposer::EventHandler *&gt;(<span class="keyword">this</span>));</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 2、初始化非虚拟显示屏：创建BufferQueue，用于和显示设备DisplayDevice，进行展示图像展示</span></span><br><span class="line">    <span class="comment">//【见小节 2、初始化非虚拟显示屏；创建BufferQueue的生产者和消费者】</span></span><br><span class="line">    <span class="keyword">if</span> (mHwc-&gt;<span class="built_in">isConnected</span>(i) || type==DisplayDevice::DISPLAY_PRIMARY) &#123;</span><br><span class="line">        <span class="comment">//创建BufferQueue的生产者和消费者</span></span><br><span class="line">        BufferQueue::<span class="built_in">createBufferQueue</span>(&amp;producer, &amp;consumer,</span><br><span class="line">                <span class="keyword">new</span> <span class="built_in">GraphicBufferAlloc</span>());</span><br><span class="line">        <span class="comment">//创建显示设备</span></span><br><span class="line">        sp&lt;DisplayDevice&gt; hw = <span class="keyword">new</span> <span class="built_in">DisplayDevice</span>(。。。);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 3、创建EventThread（用于绘制(app)）、mSFEventThread（用于合成(SurfaceFlinger)）</span></span><br><span class="line">    &#123;</span><br><span class="line">        <span class="comment">// 用于绘制(app)的线程</span></span><br><span class="line">        sp&lt;VSyncSource&gt; vsyncSrc = <span class="keyword">new</span> <span class="built_in">DispSyncSource</span>(...,<span class="string">&quot;app&quot;</span>);</span><br><span class="line">        mEventThread = <span class="keyword">new</span> <span class="built_in">EventThread</span>(vsyncSrc);</span><br><span class="line">        <span class="comment">// 用于合成(SurfaceFlinger)的线程</span></span><br><span class="line">        sp&lt;VSyncSource&gt; sfVsyncSrc = <span class="keyword">new</span> <span class="built_in">DispSyncSource</span>(&amp;mPrimaryDispSync,</span><br><span class="line">                sfVsyncPhaseOffsetNs, <span class="literal">true</span>, <span class="string">&quot;sf&quot;</span>);</span><br><span class="line">        mSFEventThread = <span class="keyword">new</span> <span class="built_in">EventThread</span>(sfVsyncSrc);</span><br><span class="line">        <span class="comment">// 4、设置EventThread，监听处理VSYNC信号回调</span></span><br><span class="line">        mEventQueue.<span class="built_in">setEventThread</span>(mSFEventThread);</span><br><span class="line">    &#125;</span><br><span class="line">        </span><br><span class="line">    <span class="comment">// 5、启动开机动画【2.10】</span></span><br><span class="line">    <span class="built_in">startBootAnim</span>();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li>1、初始化硬件HWComposer对象：用于监听硬件VSYNC信号回调</li>
+<li>2、初始化非虚拟显示屏：创建BufferQueue，用于和显示设备DisplayDevice，进行展示图像展示的连接</li>
+<li>3、创建两个EventThread：绘制(app)、绘制(sf自己)</li>
+<li>4、设置EventThread，监听处理VSYNC信号回调</li>
+<li>5、开机动画</li>
+</ul>
+<h4 id="1、初始化硬件HWComposer对象：通过GPU合成图像；注册VSYNC信号回调"><a href="#1、初始化硬件HWComposer对象：通过GPU合成图像；注册VSYNC信号回调" class="headerlink" title="1、初始化硬件HWComposer对象：通过GPU合成图像；注册VSYNC信号回调"></a><span id="jump4_4_1"/>1、初始化硬件HWComposer对象：通过GPU合成图像；注册VSYNC信号回调</h4><p>简单理解就行：</p>
+<ul>
+<li>1、HWComposer代表着硬件显示设备，通过GPU合成图像。</li>
+<li>2、注册VSYNC信号回调，<ul>
+<li>回调会再hook_vsync()方法中处理；下文VSYNC信号处理有详情；</li>
+<li>在EventThread中会处理这些信号数据，VSYNC本身是由显示驱动产生的，</li>
+</ul>
+</li>
+<li>3、在不支持硬件的VSYNC，则会创建“VSyncThread”线程来模拟定时VSYNC信号。</li>
+</ul>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"># HWComposer.<span class="function">cpp</span></span><br><span class="line"><span class="function"><span class="title">HWComposer::HWComposer</span><span class="params">(<span class="type">const</span> sp&lt;SurfaceFlinger&gt;&amp; flinger, EventHandler&amp; handler)</span> : mFlinger(flinger),...</span></span><br><span class="line"><span class="function">&#123;</span></span><br><span class="line">    ...</span><br><span class="line">    <span class="comment">//1、加载framebuffer的HAL层模块，加载HWComposer模块</span></span><br><span class="line">    <span class="type">int</span> fberr = <span class="built_in">loadFbHalModule</span>();</span><br><span class="line">    <span class="built_in">loadHwcModule</span>(); </span><br><span class="line"></span><br><span class="line">    <span class="comment">//2、hook VSYNC信号的回调方法</span></span><br><span class="line">    mCBContext-&gt;procs.vsync = &amp;hook_vsync;</span><br><span class="line">    ...</span><br><span class="line">    <span class="comment">//注册回调函数</span></span><br><span class="line">    mHwc-&gt;<span class="built_in">registerProcs</span>(mHwc, &amp;mCBContext-&gt;procs);</span><br><span class="line"></span><br><span class="line">    <span class="comment">//3、不支持硬件的VSYNC，则会创建线程来模拟定时VSYNC信号</span></span><br><span class="line">    <span class="keyword">if</span> (needVSyncThread) &#123;</span><br><span class="line">        mVSyncThread = <span class="keyword">new</span> <span class="built_in">VSyncThread</span>(*<span class="keyword">this</span>);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h4 id="2、初始化非虚拟显示屏：创建BufferQueue，用于和显示设备DisplayDevice，进行展示图像展示的连接"><a href="#2、初始化非虚拟显示屏：创建BufferQueue，用于和显示设备DisplayDevice，进行展示图像展示的连接" class="headerlink" title="2、初始化非虚拟显示屏：创建BufferQueue，用于和显示设备DisplayDevice，进行展示图像展示的连接"></a><span id="jump4_4_2"/>2、初始化非虚拟显示屏：创建BufferQueue，用于和显示设备DisplayDevice，进行展示图像展示的连接</h4><p>上边init源码中，这部分是简化的，来看完整版</p>
+<p>简单理解就行：</p>
+<ul>
+<li>1、创建生产者、消费者模型<ul>
+<li>生产者：用于接收合成好的“帧数据”</li>
+<li>消费者：从队列中消费“帧数据”，展示到屏幕上</li>
+</ul>
+</li>
+<li>2、拿到当前显示设备（即屏幕）<ul>
+<li>消费者拿到帧数据就展示到屏幕上</li>
+</ul>
+</li>
+</ul>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">SurfaceFlinger::init</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    ...</span><br><span class="line">    <span class="keyword">for</span> (<span class="type">size_t</span> i=<span class="number">0</span> ; i&lt;DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES ; i++) &#123;</span><br><span class="line">        <span class="function">DisplayDevice::DisplayType <span class="title">type</span><span class="params">((DisplayDevice::DisplayType)i)</span></span>;</span><br><span class="line">        <span class="comment">//1、建立已连接的显示设备，默认就是连接的手机屏幕</span></span><br><span class="line">        <span class="keyword">if</span> (mHwc-&gt;<span class="built_in">isConnected</span>(i) || type==DisplayDevice::DISPLAY_PRIMARY) &#123;</span><br><span class="line">            <span class="type">bool</span> isSecure = <span class="literal">true</span>;</span><br><span class="line">            <span class="built_in">createBuiltinDisplayLocked</span>(type);</span><br><span class="line">            wp&lt;IBinder&gt; token = mBuiltinDisplays[i];</span><br><span class="line"></span><br><span class="line">            sp&lt;IGraphicBufferProducer&gt; producer;</span><br><span class="line">            sp&lt;IGraphicBufferConsumer&gt; consumer;</span><br><span class="line">            <span class="comment">//2、创建BufferQueue的生产者和消费者</span></span><br><span class="line">            BufferQueue::<span class="built_in">createBufferQueue</span>(&amp;producer, &amp;consumer,</span><br><span class="line">                    <span class="keyword">new</span> <span class="built_in">GraphicBufferAlloc</span>());</span><br><span class="line"></span><br><span class="line">            sp&lt;FramebufferSurface&gt; fbs = <span class="keyword">new</span> <span class="built_in">FramebufferSurface</span>(*mHwc, i, consumer);</span><br><span class="line">            <span class="type">int32_t</span> hwcId = <span class="built_in">allocateHwcDisplayId</span>(type);</span><br><span class="line">            <span class="comment">//3、创建显示设备，默认就是连接的手机屏幕</span></span><br><span class="line">            sp&lt;DisplayDevice&gt; hw = <span class="keyword">new</span> <span class="built_in">DisplayDevice</span>(<span class="keyword">this</span>,</span><br><span class="line">                    type, hwcId, mHwc-&gt;<span class="built_in">getFormat</span>(hwcId), isSecure, token,</span><br><span class="line">                    fbs, producer,</span><br><span class="line">                    mRenderEngine-&gt;<span class="built_in">getEGLConfig</span>());</span><br><span class="line">            <span class="keyword">if</span> (i &gt; DisplayDevice::DISPLAY_PRIMARY) &#123;</span><br><span class="line">                hw-&gt;<span class="built_in">setPowerMode</span>(HWC_POWER_MODE_NORMAL);</span><br><span class="line">            &#125;</span><br><span class="line">            mDisplays.<span class="built_in">add</span>(token, hw);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    ...</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h4 id="3、创建两个EventThread-分发VSYNC信号：绘制-app-、绘制-sf自己"><a href="#3、创建两个EventThread-分发VSYNC信号：绘制-app-、绘制-sf自己" class="headerlink" title="3、创建两个EventThread 分发VSYNC信号：绘制(app)、绘制(sf自己)"></a><span id="jump4_4_3"/>3、创建两个EventThread 分发VSYNC信号：绘制(app)、绘制(sf自己)</h4><p>简单理解：</p>
+<ul>
+<li>启动两个线程，分别处理app类型和sf自己类型的VSYNC信号；<ul>
+<li>1、app类型，用于接收VSYNC信号后，发送给app进程，进行帧数据合成展示流程</li>
+<li>2、sf类型，用于接收VSYNC信号后，sf自己处理帧合成展示；</li>
+</ul>
+</li>
+<li>为什么要有两个呢？<ul>
+<li>1、主要是用来细化区分的，app类型的比较好理解，每个应用要展示数据都会注册他；</li>
+<li>2、sf类型的场景是：多窗口合成、屏幕旋转、动态壁纸等场景下，就需要sf直接处理了；</li>
+</ul>
+</li>
+</ul>
+<p>DispSyncSource：</p>
+<blockquote>
+<p>就是信号源对象，主要就是注册VYSNC信号的；可以自定义注册名称；</p>
+</blockquote>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">class</span> <span class="title class_">DispSyncSource</span> : <span class="keyword">public</span> VSyncSource, <span class="keyword">private</span> DispSync::Callback &#123;</span><br><span class="line">      .., <span class="type">const</span> <span class="type">char</span>* label) :</span><br><span class="line">          <span class="built_in">mVsyncOnLabel</span>(String8::format(<span class="string">&quot;VsyncOn-%s&quot;</span>, label)),</span><br><span class="line">          <span class="built_in">mVsyncEventLabel</span>(String8::format(<span class="string">&quot;VSYNC-%s&quot;</span>, label)),</span><br><span class="line">  ...   &#125;</span><br></pre></td></tr></table></figure>
+<p>EventThread线程:</p>
+<ul>
+<li>1、启动线程</li>
+<li>2、处理等待接收者，并获取HWC注册的VSYNC信号数据event； waitForEvent(*event) </li>
+<li>3、分发给监听者 postEvent(event)</li>
+</ul>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"># EventThread.<span class="function">cpp</span></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">EventThread::onFirstRef</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    <span class="comment">//1、运行EventThread线程</span></span><br><span class="line">    <span class="built_in">run</span>(<span class="string">&quot;EventThread&quot;</span>, PRIORITY_URGENT_DISPLAY + PRIORITY_MORE_FAVORABLE);</span><br><span class="line">&#125;</span><br><span class="line"><span class="function"><span class="type">bool</span> <span class="title">EventThread::threadLoop</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    <span class="comment">//在waitForEvent中赋值的</span></span><br><span class="line">    DisplayEventReceiver::Event event;</span><br><span class="line">    <span class="comment">//2、等待事件</span></span><br><span class="line">    signalConnections = <span class="built_in">waitForEvent</span>(&amp;event);</span><br><span class="line"></span><br><span class="line">    <span class="comment">//3、分发事件给所有的监听者</span></span><br><span class="line">    <span class="keyword">for</span> (<span class="type">size_t</span> i=<span class="number">0</span> ; i&lt;count ; i++) &#123;</span><br><span class="line">        <span class="comment">//分发事件</span></span><br><span class="line">        <span class="type">status_t</span> err = conn-&gt;<span class="built_in">postEvent</span>(event);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>waitForEvent()：</p>
+<ul>
+<li>1、开始循环</li>
+<li>2、获取VYSNC信号，赋值给event指针</li>
+<li>3、获取所有等待信号的连接，并return</li>
+</ul>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br></pre></td><td class="code"><pre><span class="line"># EventThread.cpp</span><br><span class="line">Vector&lt; sp&lt;EventThread::Connection&gt; &gt; EventThread::<span class="built_in">waitForEvent</span>(</span><br><span class="line">        DisplayEventReceiver::Event* event)</span><br><span class="line">&#123;</span><br><span class="line">    <span class="comment">//开启死循环</span></span><br><span class="line">    <span class="keyword">do</span> &#123;</span><br><span class="line">        <span class="comment">//1、获取VSyncEvent 垂直信号，赋值给*event指针</span></span><br><span class="line">        <span class="keyword">for</span> (<span class="type">int32_t</span> i=<span class="number">0</span> ; i&lt;DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES ; i++) &#123;</span><br><span class="line">            timestamp = mVSyncEvent[i].header.timestamp;</span><br><span class="line">            <span class="keyword">if</span> (timestamp) &#123;</span><br><span class="line">                <span class="comment">//找到当前VSYNC信号，并赋值</span></span><br><span class="line">                *event = mVSyncEvent[i];</span><br><span class="line">                mVSyncEvent[i].header.timestamp = <span class="number">0</span>;</span><br><span class="line">                vsyncCount = mVSyncEvent[i].vsync.count;</span><br><span class="line">                <span class="keyword">break</span>;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="comment">//2、查找正在等待事件的连接</span></span><br><span class="line">        <span class="type">size_t</span> count = mDisplayEventConnections.<span class="built_in">size</span>();</span><br><span class="line">        <span class="keyword">for</span> (<span class="type">size_t</span> i=<span class="number">0</span> ; i&lt;count ; i++) &#123;</span><br><span class="line">            <span class="function">sp&lt;Connection&gt; <span class="title">connection</span><span class="params">(mDisplayEventConnections[i].promote())</span></span>;</span><br><span class="line">            <span class="comment">// 找到所有等待事件的连接，并放到signalConnections中去；</span></span><br><span class="line">            signalConnections.<span class="built_in">add</span>(connection);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="comment">//3、VSYNC信号</span></span><br><span class="line">        <span class="keyword">if</span> (mCondition.<span class="built_in">waitRelative</span>(mLock, timeout) == TIMED_OUT) &#123;</span><br><span class="line">            mVSyncEvent[<span class="number">0</span>].header.type = DisplayEventReceiver::DISPLAY_EVENT_VSYNC;</span><br><span class="line">            mVSyncEvent[<span class="number">0</span>].header.id = DisplayDevice::DISPLAY_PRIMARY;</span><br><span class="line">            mVSyncEvent[<span class="number">0</span>].header.timestamp = <span class="built_in">systemTime</span>(SYSTEM_TIME_MONOTONIC);</span><br><span class="line">            mVSyncEvent[<span class="number">0</span>].vsync.count++;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125; <span class="keyword">while</span> (signalConnections.<span class="built_in">isEmpty</span>());</span><br><span class="line"></span><br><span class="line">    <span class="comment">//返回所有等待事件的连接</span></span><br><span class="line">    <span class="keyword">return</span> signalConnections;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h4 id="4、设置EventThread给MessageQueue，监听处理VSYNC信号回调"><a href="#4、设置EventThread给MessageQueue，监听处理VSYNC信号回调" class="headerlink" title="4、设置EventThread给MessageQueue，监听处理VSYNC信号回调"></a><span id="jump4_4_4"/>4、设置EventThread给MessageQueue，监听处理VSYNC信号回调</h4><figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">MessageQueue::setEventThread</span><span class="params">(<span class="type">const</span> sp&lt;EventThread&gt;&amp; eventThread)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    mEventThread = eventThread;</span><br><span class="line">    <span class="comment">//创建连接</span></span><br><span class="line">    mEvents = eventThread-&gt;<span class="built_in">createEventConnection</span>();</span><br><span class="line">    <span class="comment">//获取BitTube对象</span></span><br><span class="line">    mEventTube = mEvents-&gt;<span class="built_in">getDataChannel</span>();</span><br><span class="line">    <span class="comment">//监听BitTube，一旦有数据到来则调用cb_eventReceiver()</span></span><br><span class="line">    mLooper-&gt;<span class="built_in">addFd</span>(mEventTube-&gt;<span class="built_in">getFd</span>(), <span class="number">0</span>, Looper::EVENT_INPUT,</span><br><span class="line">            MessageQueue::cb_eventReceiver, <span class="keyword">this</span>);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>在硬件的VSYNC信号经过DispSync处理后，生成虚拟的VSYNC信号后，会回调到这里；</p>
+<h4 id="5、startBootAnim开机动画"><a href="#5、startBootAnim开机动画" class="headerlink" title="5、startBootAnim开机动画"></a><span id="jump4_4_5"/>5、startBootAnim开机动画</h4><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">void</span> SurfaceFlinger::startBootAnim() &#123;</span><br><span class="line">    property_set(<span class="string">&quot;service.bootanim.exit&quot;</span>, <span class="string">&quot;0&quot;</span>);</span><br><span class="line">    property_set(<span class="string">&quot;ctl.start&quot;</span>, <span class="string">&quot;bootanim&quot;</span>);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+
+<h3 id="（4）SurfaceFlinger-run循环等待处理消息"><a href="#（4）SurfaceFlinger-run循环等待处理消息" class="headerlink" title="（4）SurfaceFlinger.run循环等待处理消息"></a><span id="jump4_6"/>（4）SurfaceFlinger.run循环等待处理消息</h3><p>循环处理数据</p>
+<ul>
+<li>应用程序创建、销毁或者修改Surface的请求</li>
+<li>应用程序请求刷新屏幕的请求</li>
+<li>应用程序请求截屏的请求</li>
+<li>来自HWComposer的VSYNC事件</li>
+<li>来自EventThread的事件等</li>
+</ul>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line">#SurfaceFlinger.<span class="function">cpp</span></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">SurfaceFlinger::run</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    <span class="keyword">do</span> &#123;</span><br><span class="line">        <span class="comment">//不断循环地等待事件【见小节2.12】</span></span><br><span class="line">        <span class="built_in">waitForEvent</span>();</span><br><span class="line">    &#125; <span class="keyword">while</span> (<span class="literal">true</span>);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">SurfaceFlinger::waitForEvent</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    mEventQueue.<span class="built_in">waitMessage</span>(); <span class="comment">//【2.13】</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">#MessageQueue.<span class="function">cpp</span></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">MessageQueue::waitMessage</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    <span class="keyword">do</span> &#123;</span><br><span class="line">        IPCThreadState::<span class="built_in">self</span>()-&gt;<span class="built_in">flushCommands</span>();</span><br><span class="line">        <span class="type">int32_t</span> ret = mLooper-&gt;<span class="built_in">pollOnce</span>(<span class="number">-1</span>);</span><br><span class="line">        ...</span><br><span class="line">    &#125; <span class="keyword">while</span> (<span class="literal">true</span>);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h3 id="（5）在Android系统中，SurfaceFlinger服务主要包含以下三个线程："><a href="#（5）在Android系统中，SurfaceFlinger服务主要包含以下三个线程：" class="headerlink" title="（5）在Android系统中，SurfaceFlinger服务主要包含以下三个线程："></a><span id="jump4_5"/>（5）在Android系统中，SurfaceFlinger服务主要包含以下三个线程：</h3><ol>
+<li><p>主线程：SurfaceFlinger的主线程主要负责处理来自应用程序的请求，如创建Surface、销毁Surface、请求刷新屏幕等。</p>
+</li>
+<li><p>EventThread：EventThread负责处理VSYNC事件。当收到VSYNC信号时，EventThread会将VSYNC信号分发给所有注册的监听者，包括应用程序和SurfaceFlinger自身。</p>
+</li>
+<li><p>DispSyncThread：DispSyncThread负责维护一个周期性的VSYNC信号源。这个信号源可以被应用程序和SurfaceFlinger用来同步它们的渲染操作。</p>
+</li>
+</ol>
+<p>以上是SurfaceFlinger的主要线程，除此之外，SurfaceFlinger还可能创建其他的辅助线程，用来执行一些特殊的任务，如截屏操作等。</p>
+<h2 id="五、SurfaceFlinger-VSYNC信号处理流程"><a href="#五、SurfaceFlinger-VSYNC信号处理流程" class="headerlink" title="五、SurfaceFlinger VSYNC信号处理流程"></a><span id="jump5"/>五、SurfaceFlinger VSYNC信号处理流程</h2><h3 id="（0）主时序图，总结先行"><a href="#（0）主时序图，总结先行" class="headerlink" title=" （0）主时序图，总结先行"></a><span id="jump5_0"/> （0）主时序图，总结先行</h3><p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%876-SurfaceFlinger&VSYNC%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86_5.jpg" alt="image.png"></p>
+<ul>
+<li>1、<a href="#jump5_1">【HWC收到】</a>底层硬件vsync信号发送过来，一路执行到<a href="#jump5_3">【（3）DispSync将硬件VSYNC处理，并转化成一个虚拟的VSYNC信号源】</a>DispSyncThread.updateModel()方法中调用mCond.signal() 来唤醒DispSyncThread线程；</li>
+<li>2、DispSyncThread线程：执行到<a href="#jump5_5">【EventThread::onVSyncEvent()】</a>方法中调用mCondition.broadcast() 唤醒EventThread线程；</li>
+<li>3、EventThread线程：执行到<a href="#jump5_5">【DisplayEventReceiver::sendEvents()】</a>方法中调用BitTube::sendObjects()； 当收到数据则调用<a href="#jump5_7">【MQ.cb_eventReceiver()】</a>，然后再经过handler消息机制，进入SurfaceFlinger主线程；</li>
+<li>4、SurfaceFlinger主线程：进入到<a href="#jump5_7">【MesageQueue的handleMessage()】</a>，最终调用SurfaceFlinger的handleMessageRefresh()。开始绘制</li>
+</ul>
+<h3 id="（1）HWComposer-hook-vsync-接受底层硬件VSYNC信号回调"><a href="#（1）HWComposer-hook-vsync-接受底层硬件VSYNC信号回调" class="headerlink" title=" （1）HWComposer::hook_vsync() 接受底层硬件VSYNC信号回调"></a><span id="jump5_1"/> （1）HWComposer::hook_vsync() 接受底层硬件VSYNC信号回调</h3><p>上文中提到，HWComposer对象创建过程，会注册一些回调方法</p>
+<ul>
+<li>当硬件产生VSYNC信号时，则会回调hook_vsync()方法。</li>
+</ul>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line"># HWComposer.<span class="function">cpp</span></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">HWComposer::hook_vsync</span><span class="params">(<span class="type">const</span> <span class="keyword">struct</span> hwc_procs* procs, <span class="type">int</span> disp,</span></span></span><br><span class="line"><span class="params"><span class="function">        <span class="type">int64_t</span> timestamp)</span> </span>&#123;</span><br><span class="line">    cb_context* ctx = <span class="built_in">reinterpret_cast</span>&lt;cb_context*&gt;(</span><br><span class="line">            <span class="built_in">const_cast</span>&lt;<span class="type">hwc_procs_t</span>*&gt;(procs));</span><br><span class="line">    ctx-&gt;hwc-&gt;<span class="built_in">vsync</span>(disp, timestamp);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">HWComposer::vsync</span><span class="params">(<span class="type">int</span> disp, <span class="type">int64_t</span> timestamp)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">if</span> (<span class="built_in">uint32_t</span>(disp) &lt; HWC_NUM_PHYSICAL_DISPLAY_TYPES) &#123;</span><br><span class="line">        &#123;</span><br><span class="line">            Mutex::Autolock _l(mLock);</span><br><span class="line">            <span class="keyword">if</span> (timestamp == mLastHwVSync[disp]) &#123;</span><br><span class="line">                <span class="keyword">return</span>; <span class="comment">//忽略重复的VSYNC信号</span></span><br><span class="line">            &#125;</span><br><span class="line">            mLastHwVSync[disp] = timestamp;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="comment">//回调给sf</span></span><br><span class="line">        mEventHandler.<span class="built_in">onVSyncReceived</span>(disp, timestamp);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>当收到VSYNC信号则会回调mEventHandler的onVSyncReceived()方法，</p>
+<ul>
+<li>此处mEventHandler是指SurfaceFlinger对象。</li>
+</ul>
+<h3 id="（2）SurfaceFlinger-onVSyncReceived-回调到SF方法"><a href="#（2）SurfaceFlinger-onVSyncReceived-回调到SF方法" class="headerlink" title=" （2）SurfaceFlinger::onVSyncReceived() 回调到SF方法"></a><span id="jump5_2"/> （2）SurfaceFlinger::onVSyncReceived() 回调到SF方法</h3><figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"># SurfaceFlinger.<span class="function">cpp</span></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">SurfaceFlinger::onVSyncReceived</span><span class="params">(<span class="type">int</span> type, <span class="type">nsecs_t</span> timestamp)</span> </span>&#123;</span><br><span class="line">    <span class="type">bool</span> needsHwVsync = <span class="literal">false</span>;</span><br><span class="line"></span><br><span class="line">    &#123;</span><br><span class="line">        Mutex::Autolock _l(mHWVsyncLock);</span><br><span class="line">        <span class="keyword">if</span> (type == <span class="number">0</span> &amp;&amp; mPrimaryHWVsyncEnabled) &#123;</span><br><span class="line">            <span class="comment">// 此处mPrimaryDispSync为DispSync类【见小节3.4】</span></span><br><span class="line">            needsHwVsync = mPrimaryDispSync.<span class="built_in">addResyncSample</span>(timestamp);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="（3）DispSync-addResyncSample-将硬件VSYNC处理，并转化成一个虚拟的VSYNC信号源。"><a href="#（3）DispSync-addResyncSample-将硬件VSYNC处理，并转化成一个虚拟的VSYNC信号源。" class="headerlink" title=" （3）DispSync::addResyncSample() 将硬件VSYNC处理，并转化成一个虚拟的VSYNC信号源。"></a><span id="jump5_3"/> （3）DispSync::addResyncSample() 将硬件VSYNC处理，并转化成一个虚拟的VSYNC信号源。</h3><p>先了解下DispSync的作用：</p>
+<blockquote>
+<ul>
+<li>1、Android系统的VSYNC信号是硬件发来的，它的频率是固定的，不适用所有场景；比如切换高刷等等操作；</li>
+<li>2、所以引入了DispSync，用它来处理硬件的VSYNC，并生成一个频率可调的虚拟VSYNC信号源；</li>
+<li>DispSync还支持VSYNC信号的偏移调整。通过调整VSYNC信号的偏移，可以使得应用程序和SurfaceFlinger的渲染操作在时间上更加精确地对齐，从而提高显示的流畅性和响应速度</li>
+</ul>
+</blockquote>
+<p>所以它在启动时会创建一个DispSyncThread线程，来维护VSYNC信号；</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br></pre></td><td class="code"><pre><span class="line">DispSync::<span class="built_in">DispSync</span>() :</span><br><span class="line">        <span class="built_in">mRefreshSkipCount</span>(<span class="number">0</span>),</span><br><span class="line">        <span class="built_in">mThread</span>(<span class="keyword">new</span> <span class="built_in">DispSyncThread</span>()) &#123;</span><br><span class="line">        </span><br><span class="line">    mThread-&gt;<span class="built_in">run</span>(<span class="string">&quot;DispSync&quot;</span>, PRIORITY_URGENT_DISPLAY + PRIORITY_MORE_FAVORABLE);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="type">bool</span> <span class="title">threadLoop</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    <span class="comment">//开启无限循环，等待处理真实的硬件VSYNC信号；</span></span><br><span class="line">    <span class="keyword">while</span> (<span class="literal">true</span>) &#123;</span><br><span class="line">         Vector&lt;CallbackInvocation&gt; callbackInvocations;</span><br><span class="line">         &#123; </span><br><span class="line">            <span class="function">Mutex::Autolock <span class="title">lock</span><span class="params">(mMutex)</span></span>;</span><br><span class="line">            <span class="keyword">if</span> (mPeriod == <span class="number">0</span>) &#123;</span><br><span class="line">                <span class="comment">// 等待被唤醒</span></span><br><span class="line">                err = mCond.<span class="built_in">wait</span>(mMutex);</span><br><span class="line">                <span class="keyword">continue</span>;</span><br><span class="line">             &#125;</span><br><span class="line">             <span class="comment">//收集vsync信号的所有回调方法</span></span><br><span class="line">             callbackInvocations = <span class="built_in">gatherCallbackInvocationsLocked</span>(now);</span><br><span class="line">         &#125;</span><br><span class="line"></span><br><span class="line">         <span class="keyword">if</span> (callbackInvocations.<span class="built_in">size</span>() &gt; <span class="number">0</span>) &#123;</span><br><span class="line">             <span class="comment">//回调所有对象的onDispSyncEvent方法</span></span><br><span class="line">             <span class="built_in">fireCallbackInvocations</span>(callbackInvocations);</span><br><span class="line">         &#125;</span><br><span class="line">     &#125;</span><br><span class="line"> &#125;   </span><br></pre></td></tr></table></figure>
+<p>线程”DispSync”停留在mCond的wait()过程，等待被唤醒。</p>
+<p>当上边sf::onVSyncReceived()调用addResyncSample()时，就会被唤醒 </p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">bool</span> <span class="title">DispSync::addResyncSample</span><span class="params">(<span class="type">nsecs_t</span> timestamp)</span> </span>&#123;</span><br><span class="line">    <span class="function">Mutex::Autolock <span class="title">lock</span><span class="params">(mMutex)</span></span>;</span><br><span class="line">    ...</span><br><span class="line">    <span class="built_in">updateModelLocked</span>(); </span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">DispSync::updateModelLocked</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    ...</span><br><span class="line">    mThread-&gt;<span class="built_in">updateModel</span>(mPeriod, mPhase);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">class</span> <span class="title class_">DispSyncThread</span>: <span class="keyword">public</span> Thread &#123;</span><br><span class="line">    <span class="function"><span class="type">void</span> <span class="title">updateModel</span><span class="params">(<span class="type">nsecs_t</span> period, <span class="type">nsecs_t</span> phase)</span> </span>&#123;</span><br><span class="line">        <span class="function">Mutex::Autolock <span class="title">lock</span><span class="params">(mMutex)</span></span>;</span><br><span class="line">        mPeriod = period;</span><br><span class="line">        mPhase = phase;</span><br><span class="line">        mCond.<span class="built_in">signal</span>(); <span class="comment">//唤醒目标线程</span></span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>唤醒后，会继续执行 fireCallbackInvocations()</p>
+<ul>
+<li>会执行到DispSyncSource中去，也就是创建SurfaceFlinger::init()时那个信号源注册，【3、创建两个EventThread 分发VSYNC信号：绘制(app)、绘制(sf自己)】</li>
+</ul>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">fireCallbackInvocations</span><span class="params">(<span class="type">const</span> Vector&lt;CallbackInvocation&gt;&amp; callbacks)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">for</span> (<span class="type">size_t</span> i = <span class="number">0</span>; i &lt; callbacks.<span class="built_in">size</span>(); i++) &#123;</span><br><span class="line">        callbacks[i].mCallback-&gt;<span class="built_in">onDispSyncEvent</span>(callbacks[i].mEventTime);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="（4）DispSyncSource-onDispSyncEvent-信号源对象承接回调；"><a href="#（4）DispSyncSource-onDispSyncEvent-信号源对象承接回调；" class="headerlink" title=" （4）DispSyncSource::onDispSyncEvent() 信号源对象承接回调；"></a><span id="jump5_4"/> （4）DispSyncSource::onDispSyncEvent() 信号源对象承接回调；</h3><figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">#  SurfaceFlinger.cpp ::<span class="function">DispSyncSource</span></span><br><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="type">void</span> <span class="title">onDispSyncEvent</span><span class="params">(<span class="type">nsecs_t</span> when)</span> </span>&#123;</span><br><span class="line">    sp&lt;VSyncSource::Callback&gt; callback;</span><br><span class="line">    <span class="comment">//这个callback就是EventThread </span></span><br><span class="line">    callback-&gt;<span class="built_in">onVSyncEvent</span>(when); </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h3 id="（5）EventThread-onVSyncEvent-回调到VSYNC信号分发线程；"><a href="#（5）EventThread-onVSyncEvent-回调到VSYNC信号分发线程；" class="headerlink" title=" （5）EventThread::onVSyncEvent() 回调到VSYNC信号分发线程；"></a><span id="jump5_5"/> （5）EventThread::onVSyncEvent() 回调到VSYNC信号分发线程；</h3><figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">#EventThread.<span class="function">cpp</span></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">EventThread::onVSyncEvent</span><span class="params">(<span class="type">nsecs_t</span> timestamp)</span> </span>&#123;</span><br><span class="line">    Mutex::Autolock _l(mLock);</span><br><span class="line">    mVSyncEvent[<span class="number">0</span>].header.type = DisplayEventReceiver::DISPLAY_EVENT_VSYNC;</span><br><span class="line">    mVSyncEvent[<span class="number">0</span>].header.id = <span class="number">0</span>;</span><br><span class="line">    mVSyncEvent[<span class="number">0</span>].header.timestamp = timestamp;</span><br><span class="line">    mVSyncEvent[<span class="number">0</span>].vsync.count++;</span><br><span class="line">    mCondition.<span class="built_in">broadcast</span>(); <span class="comment">//唤醒EventThread线程</span></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>mCondition.broadcast能够唤醒处理waitForEvent()过程的EventThread </p>
+<ul>
+<li><a href="#jump4_4_3">【见小节3、创建两个EventThread 分发VSYNC信号：绘制(app)、绘制(sf自己)】</a>，</li>
+</ul>
+<p>EventThread唤醒后，拿到waitForEvent()数据，会往下执行conn的postEvent().</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="type">status_t</span> EventThread::Connection::<span class="built_in">postEvent</span>(</span><br><span class="line">        <span class="type">const</span> DisplayEventReceiver::Event&amp; event) &#123;</span><br><span class="line">    <span class="type">ssize_t</span> size = DisplayEventReceiver::<span class="built_in">sendEvents</span>(mChannel, &amp;event, <span class="number">1</span>);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="（6）DisplayEventReceiver-sendEvents-回调给MessageQueue"><a href="#（6）DisplayEventReceiver-sendEvents-回调给MessageQueue" class="headerlink" title=" （6）DisplayEventReceiver::sendEvents() 回调给MessageQueue"></a><span id="jump5_6"/> （6）DisplayEventReceiver::sendEvents() 回调给MessageQueue</h3><figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">ssize_t</span> <span class="title">DisplayEventReceiver::sendEvents</span><span class="params">(<span class="type">const</span> sp&lt;BitTube&gt;&amp; dataChannel,</span></span></span><br><span class="line"><span class="params"><span class="function">        Event <span class="type">const</span>* events, <span class="type">size_t</span> count)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="keyword">return</span> BitTube::<span class="built_in">sendObjects</span>(dataChannel, events, count);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>根据小节<a href="#jump4_4_4">【4、设置EventThread给MessageQueue，监听处理VSYNC信号回调】</a><br>可知监听BitTube，此处调用BitTube来sendObjects。一旦收到数据，则调用MessageQueue.cb_eventReceiver()方法。</p>
+<h3 id="（7）MessageQueue-cb-eventReceiver-分发VYSNC信号"><a href="#（7）MessageQueue-cb-eventReceiver-分发VYSNC信号" class="headerlink" title=" （7）MessageQueue::cb_eventReceiver() 分发VYSNC信号"></a><span id="jump5_7"/> （7）MessageQueue::cb_eventReceiver() 分发VYSNC信号</h3><figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">int</span> <span class="title">MessageQueue::cb_eventReceiver</span><span class="params">(<span class="type">int</span> fd, <span class="type">int</span> events, <span class="type">void</span>* data)</span> </span>&#123;</span><br><span class="line">    MessageQueue* queue = <span class="built_in">reinterpret_cast</span>&lt;MessageQueue *&gt;(data);</span><br><span class="line">    <span class="keyword">return</span> queue-&gt;<span class="built_in">eventReceiver</span>(fd, events);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="type">int</span> <span class="title">MessageQueue::eventReceiver</span><span class="params">(<span class="type">int</span> <span class="comment">/*fd*/</span>, <span class="type">int</span> <span class="comment">/*events*/</span>)</span> </span>&#123;</span><br><span class="line">    <span class="type">ssize_t</span> n;</span><br><span class="line">    <span class="comment">//分发消息到handler</span></span><br><span class="line">    mHandler-&gt;<span class="built_in">dispatchRefresh</span>(); </span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="type">void</span> MessageQueue::Handler::<span class="built_in">dispatchRefresh</span>() &#123;</span><br><span class="line">    <span class="comment">//发送消息，则进入handleMessage过程【见小节3.13】</span></span><br><span class="line">    mQueue.mLooper-&gt;<span class="built_in">sendMessage</span>(<span class="keyword">this</span>, <span class="built_in">Message</span>(MessageQueue::REFRESH));</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="type">void</span> MessageQueue::Handler::<span class="built_in">handleMessage</span>(<span class="type">const</span> Message&amp; message) &#123;</span><br><span class="line">    <span class="keyword">switch</span> (message.what) &#123;</span><br><span class="line">        <span class="comment">//对于REFRESH操作，则进入SF的onMessageReceived().</span></span><br><span class="line">        <span class="keyword">case</span> REFRESH:</span><br><span class="line">            mQueue.mFlinger-&gt;<span class="built_in">onMessageReceived</span>(message.what);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>进入到SurfaceFlinger的onMessageReceived()方法，<br>就进入到<a href="#jump6">【六、SurfaceFlinger 绘制流程】</a>了。</p>
+<h2 id="六、SurfaceFlinger-绘制流程"><a href="#六、SurfaceFlinger-绘制流程" class="headerlink" title="六、SurfaceFlinger 绘制流程"></a><span id="jump6"/>六、SurfaceFlinger 绘制流程</h2><h3 id="（0）总结先行"><a href="#（0）总结先行" class="headerlink" title="（0）总结先行"></a><span id="jump6_0"/>（0）总结先行</h3><p>由VSYNC信号回调到SF::handleMessageRefresh()</p>
+<p>SurfaceFlinger的主要作用：</p>
+<blockquote>
+<p>1、SurfaceFlinger接受到VSYNC信号后，调用到handleMessageRefresh()<br>2、检测所有的Surface对象，看看哪一块需要重绘；<br>3、将需要重绘的Surface送到合成器进行合成，<br>4、回调每个layer，去更新Surface重绘后的图像</p>
+</blockquote>
+<p>具体绘制流程：</p>
+<blockquote>
+<p>1、preComposition：根据上次绘制的图层中是否有更新，来决定是否执行invalidate（重绘）过程；<br>2、rebuildLayerStacks： 重建每个显示屏的所有可见Layer列表；<br>3、setUpHWComposer：更新HWComposer的图层<br>4、doComposition：合成所有图层的图像<br>5、postComposition：回调每个layer的onPostComposition。</p>
+</blockquote>
+<p>具体看这个吧：<a target="_blank" rel="noopener" href="https://gityuan.com/2017/02/18/surface_flinger_2/">https://gityuan.com/2017/02/18/surface_flinger_2/</a></p>
+<p>感觉没必要看这些具体方法做了什么，意义好像不太大了；</p>
+<h3 id="（1）handleMessageRefresh-由VSYNC信号触发调用"><a href="#（1）handleMessageRefresh-由VSYNC信号触发调用" class="headerlink" title="（1）handleMessageRefresh()由VSYNC信号触发调用"></a><span id="jump6_1"/>（1）handleMessageRefresh()由VSYNC信号触发调用</h3><p>上边onMessageReceived()接受到VSYNC信号后，最终调用到该SF的handleMessageRefresh()方法。</p>
+<h3 id="（2）preComposition：根据上次绘制的图层中是否有更新，来决定是否执行invalidate过程；"><a href="#（2）preComposition：根据上次绘制的图层中是否有更新，来决定是否执行invalidate过程；" class="headerlink" title="（2）preComposition：根据上次绘制的图层中是否有更新，来决定是否执行invalidate过程；"></a><span id="jump6_2"/>（2）preComposition：根据上次绘制的图层中是否有更新，来决定是否执行invalidate过程；</h3><h3 id="（3）rebuildLayerStacks：重建每个显示屏的所有可见Layer列表；"><a href="#（3）rebuildLayerStacks：重建每个显示屏的所有可见Layer列表；" class="headerlink" title="（3）rebuildLayerStacks：重建每个显示屏的所有可见Layer列表；"></a><span id="jump6_3"/>（3）rebuildLayerStacks：重建每个显示屏的所有可见Layer列表；</h3><h3 id="（4）setUpHWComposer：更新HWComposer的图层"><a href="#（4）setUpHWComposer：更新HWComposer的图层" class="headerlink" title="（4）setUpHWComposer：更新HWComposer的图层"></a><span id="jump6_4"/>（4）setUpHWComposer：更新HWComposer的图层</h3><h3 id="（5）doComposition：合成所有图层的图像"><a href="#（5）doComposition：合成所有图层的图像" class="headerlink" title="（5）doComposition：合成所有图层的图像"></a><span id="jump6_5"/>（5）doComposition：合成所有图层的图像</h3><h3 id="（6）postComposition：回调每个layer的onPostComposition。"><a href="#（6）postComposition：回调每个layer的onPostComposition。" class="headerlink" title="（6）postComposition：回调每个layer的onPostComposition。"></a><span id="jump6_6"/>（6）postComposition：回调每个layer的onPostComposition。</h3><h2 id="七、Choreography接收SurfaceFlinger的VSYNC信号"><a href="#七、Choreography接收SurfaceFlinger的VSYNC信号" class="headerlink" title="七、Choreography接收SurfaceFlinger的VSYNC信号"></a><span id="jump7"/>七、Choreography接收SurfaceFlinger的VSYNC信号</h2><p>其实这跟SurfaceFlinger没有什么太大关系，只是最开始看源码的时候，比较混乱，以为这个有什么特殊关系；</p>
+<p>本质上，SurfaceFlinger</p>
+<ul>
+<li>1、是会监听HWComposer硬件VSYNC信号</li>
+<li>2、唤醒DIspSync线程处理VSYNC信号，并发出虚拟的VSYNC信号到EventThread</li>
+<li>3、EventThread再通过BitTube直接传递到目标进程所对应的目标线程；</li>
+<li>4、根据设置的不同的DisplayEventReceiver，会走到不同的分发逻辑中</li>
+<li>5、对于Choreography的DisplayEventReceiver，会调用到hanldeEvent()方法</li>
+<li>6、dispatchVsync() 分发</li>
+<li>7、最后调用回java层的onVsync()方法中；</li>
+</ul>
+<p><img src="https://raw.githubusercontent.com/IRVING18/pic/master/Framework%E7%B3%BB%E7%BB%9F%E7%AF%876-SurfaceFlinger&VSYNC%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86_6.jpg" alt="未命名绘图.png"></p>
+<h2 id="八、总结"><a href="#八、总结" class="headerlink" title="八、总结"></a><span id="jump8"/>八、总结</h2><p>1、从SurfaceFlinger启动说起<br>2、说一下VSYNC信号源处理过程，又怎么回调到Choreography<br>3、绘制流程，</p>
+<h3 id="（1）讲讲SurfaceFlinger在Activity绘制过程的作用？"><a href="#（1）讲讲SurfaceFlinger在Activity绘制过程的作用？" class="headerlink" title="（1）讲讲SurfaceFlinger在Activity绘制过程的作用？"></a><span id="jump8_1"/>（1）讲讲SurfaceFlinger在Activity绘制过程的作用？</h3><h4 id="1、从Activity启动开始讲："><a href="#1、从Activity启动开始讲：" class="headerlink" title="1、从Activity启动开始讲："></a>1、从Activity启动开始讲：</h4><ul>
+<li>Launcher启动Activity&#x3D;》startActivity开始，<ul>
+<li>【APP（调用方）】：通过AMP发送startActivity 命令到AMS</li>
+<li>【AMS】：startActivityAndWait()<ul>
+<li>ActivityStack：startActivityMayWait 和PMS交互通过Intent获取ActivityInfo信息</li>
+<li>ActivityStack：startActivityLocked() <ul>
+<li>① 走<span style="color:red">onPause</span>过程<ul>
+<li>判断是否有mResumeActivity：即是否有调用方Activity（命令启动时就没有）</li>
+</ul>
+</li>
+<li>② 走新App创建过程<ul>
+<li>startProcessLocked() <ul>
+<li>发送给【Zygoet】创建进程</li>
+<li>App进程ActivityThread.main()函数</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>【Zygoet】：<ul>
+<li>fork进程</li>
+</ul>
+</li>
+<li>【App（新）】进程ActivityThread.main()函数；<ul>
+<li>attachApplication()注册App进程的BnBinder给AMS，用于通信；</li>
+</ul>
+</li>
+<li>【AMS】：获取到app的BnBinder对象，<ul>
+<li>bindApplication() 调用APP进程，<ul>
+<li>【App进程】：创建Application对象；</li>
+<li>【App进程】：installContentProviders() 初始化ContentProvider并发布；具体看ContentProvider篇</li>
+</ul>
+</li>
+<li>realStartActivity() 调用APP进程</li>
+</ul>
+</li>
+<li>【App（新）】<ul>
+<li>handleLaunchActivity() <span style="color:red">onCreate()</span>：创建Activity、Window、Decorview</li>
+<li>hanldeResumeActivity() <span style="color:red">onResume()</span>：注册view到window上<ul>
+<li>perfromResume() 创建ViewRootImpl、window.addView(root)、注册Choreography VSYNC信号回调；</li>
+<li>VSYNC信号回调后，调用doFrame()，最终调用performTraversals() <ul>
+<li>measure()</li>
+<li>layout()</li>
+<li>draw()</li>
+</ul>
+</li>
+<li>addIdleHanlder() <ul>
+<li>在handler中回调AMS：activityIdle() 最终回调上个Activity的stop方法；</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>【AMS】：activityIdle() 最终回调<ul>
+<li>ActivityStack：activityIdleInternal() <ul>
+<li>最终回调mResumeActivity（即APP（调用方））的<span style="color:red">onStop()</span>方法</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<h4 id="2、至此启动已经讲完，单独吧draw流程说下："><a href="#2、至此启动已经讲完，单独吧draw流程说下：" class="headerlink" title="2、至此启动已经讲完，单独吧draw流程说下："></a>2、至此启动已经讲完，单独吧draw流程说下：</h4><ul>
+<li>【App（新）】的draw()流程单独拿出来详解下<ul>
+<li>draw()<ul>
+<li>此时已经能知道View的具体大小了，就会通过WMS去SurfaceFlinger申请Surface画布回来；</li>
+<li>【WMS】<ul>
+<li>relayoutWindow(mSurface)去SurfaceFlinger中申请一块Surface空间，通过Binder传会App进程，并赋值给mSurface成员变量；</li>
+</ul>
+</li>
+<li>mAttachInfo.mThreadedRenderer.initializeIfNeeded(mSurface);将mSurface关联给RenderThread线程</li>
+<li>mAttachInfo.mThreadedRenderer.draw()调用RenderThread线程开启绘制流程</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>【RenderThread】：<ul>
+<li>initialzeIfNeeded() 关联mSurface</li>
+<li>updateRootDisplayList() 遍历view树，完成绘制操作命令树的构建；</li>
+<li>syncAndDrawFrame(choreographer.mFrameInfo);唤起Native层绘制线程，调用OpenGL执行渲染任务；绘制到关联的Surface上，放到BufferQueue中；</li>
+</ul>
+</li>
+<li>【SurfaceFlinger】：<ul>
+<li>在开机时启动，并开始轮询；</li>
+<li>处理硬件发来的VSYNC信号，通过DispSync来处理，并生成虚拟的VSYNC信号，发送给App、Sf进程的监听方法；</li>
+<li>SF接收到DispSync的VSYNC信号后，会从BufferQueue中去获取Surface的数据，<ul>
+<li>开始对所有Surface层级进行合成帧，将合成后的帧数据放入FrameBuffer中；</li>
+<li>硬件显示设备会自动解析FrameBuffer中的帧数据，进行展示；</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p>注意：</p>
+<ul>
+<li>BufferQueue<ul>
+<li>是存储Surface数据的，用于App和SF数据交互</li>
+<li>App将view经OpenGL、Skia渲染的数据存入BufferQueue中；</li>
+<li>SurfaceFlinger，在VSYNC信号到时，读取BufferQueue数据，进一步处理成Frame，然后放入FrameBuffer中；</li>
+</ul>
+</li>
+<li>FrameBuffer<ul>
+<li>是存储帧数据的，用于SurfaceFlinger和Device显示设备交互</li>
+<li>SurfaceFlinger拿到BufferQueue数据后，处理成Frame帧数据，放入FrameBuffer中；</li>
+<li>Device硬件显示设备，从FrameBuffer中获取数据进行显示；</li>
+</ul>
+</li>
+</ul>
+<h3 id="（2）BufferQueue怎么保障线程安全的呢"><a href="#（2）BufferQueue怎么保障线程安全的呢" class="headerlink" title=" （2）BufferQueue怎么保障线程安全的呢?"></a><span id="jump8_2"/> （2）BufferQueue怎么保障线程安全的呢?</h3><p>确实，由于App进程和SurfaceFlinger进程可能同时操作Surface，所以需要一种机制来保证线程安全。Android系统中使用的是BufferQueue机制来保证这种情况下的线程安全。</p>
+<p>在Android系统中，每个Surface都有一个与之关联的BufferQueue，它是一个可以在不同进程间共享的队列，用于存储图像数据。App进程在绘制完视图后，会将绘制结果（即一个buffer）提交到这个BufferQueue中，而不是直接写入Surface。而SurfaceFlinger在处理Surface时，也是从这个BufferQueue中取出buffer来进行处理的。</p>
+<p>这个BufferQueue提供了一套生产者&#x2F;消费者模型，App进程作为生产者，将绘制好的buffer提交到BufferQueue中，而SurfaceFlinger作为消费者，从BufferQueue中取出buffer来进行处理。通过这种方式，BufferQueue实现了在多进程环境下对Surface的线程安全操作。</p>
+<p>同时，BufferQueue还有一套机制来防止App进程在SurfaceFlinger还没有处理完当前buffer时，就提交新的buffer。当App进程试图提交新的buffer时，如果BufferQueue中已经有未处理的buffer，那么这个提交操作会被阻塞，直到SurfaceFlinger处理完当前buffer，才能提交新的buffer。这也是保证线程安全的一种机制。</p>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a href="https://irving18.github.io">王征</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://irving18.github.io/2024/07/21/Framework%E7%B3%BB%E7%BB%9F%E7%AF%876-SurfaceFlinger&amp;VSYNC%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86/">https://irving18.github.io/2024/07/21/Framework%E7%B3%BB%E7%BB%9F%E7%AF%876-SurfaceFlinger&amp;VSYNC%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://irving18.github.io" target="_blank">Android高级直通车</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/Android%E8%BF%9B%E9%98%B6/">Android进阶</a><a class="post-meta__tags" href="/tags/Framework/">Framework</a><a class="post-meta__tags" href="/tags/%E7%B3%BB%E7%BB%9F%E6%9C%8D%E5%8A%A1/">系统服务</a><a class="post-meta__tags" href="/tags/SurfaceFlinger/">SurfaceFlinger</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,twitter,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc/sharejs/dist/js/social-share.min.js" defer></script></div></div><div class="post-reward"><div class="reward-button"><i class="fas fa-qrcode"></i>赞助</div><div class="reward-main"><ul class="reward-all"><li class="reward-item"><a href="/img/wechat_pay.png" target="_blank"><img class="post-qr-code-img" src="/img/wechat_pay.png" alt="wechat"/></a><div class="post-qr-code-desc">wechat</div></li></ul></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2024/07/24/Framework%E7%B3%BB%E7%BB%9F%E7%AF%877-PackageManagerService(PMS)1-%E5%90%AF%E5%8A%A8%E8%BF%87%E7%A8%8B/" title="Framework系统篇7-PackageManagerService(PMS)1-启动过程"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">Framework系统篇7-PackageManagerService(PMS)1-启动过程</div></div><div class="info-2"><div class="info-item-1">目录 完整的PMS启动、Activity获取的流程图 一、前述 1.1 先了解下PMS的作用 1.2 从SystemServer进程调度PMS启动 1.2.1 运行SystemServer.run()方法 1.2.2 在startBootstrapServices()中启动PMS.main() 1.2.3 在startOtherServices()中继续调用PMS核心方法：performBootDexOpt()、systemReady()     二、PMS.main()启动 2.1 开始阶段（PMS_START）创建Settings保存app安装信息等，开启文件目录 2.1.1 Settings：用于保存所有app的安装信息等 2.1.2 SystemConfig：存储应用的权限等信息，如系统应用等 2.1.3 在Data分区创建一些目录：如&#x2F;data&#x2F;data 等   2.2 扫描系统阶段（PMS_SYSTEM_SCAN_START）读取系统app、Framework文件 2.3...</div></div></div></a><a class="pagination-related" href="/2024/07/20/Framework%E7%B3%BB%E7%BB%9F%E7%AF%875-InputManagerService(IMS)%EF%BC%9A%E5%B1%8F%E5%B9%95%E4%BA%8B%E4%BB%B6%E8%BE%93%E5%85%A5/" title="Framework系统篇5-InputManagerService(IMS)：屏幕事件输入"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">Framework系统篇5-InputManagerService(IMS)：屏幕事件输入</div></div><div class="info-2"><div class="info-item-1">目录 一、整体介绍 （1）完整流程图 （2）设备文件dev&#x2F;event、三个核心类、三个队列的关系   二、IMS启动-&gt;事件处理过程 （1）完整介绍 （2）源码介绍   三、InputReader线程 四、InputDispatcher线程 五、UI线程 六、事件处理过程 （1）整体框架图 （2）交互过程   七、Interview （1）为什么InputDispatcher和应用app通信采用Socket，而不是Binder？ （2）为什么InputDispatcher要先处理数据放到outboundQueue，再取出来处理完放到waitQueue中？ （3）简述Input系统？   参考链接 gityuan...</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2024/07/08/Framework%E7%B3%BB%E7%BB%9F%E7%AF%871-Android%E7%B3%BB%E7%BB%9F%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B/" title="Framework系统篇1-Android系统启动流程"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-08</div><div class="info-item-2">Framework系统篇1-Android系统启动流程</div></div><div class="info-2"><div class="info-item-1">[toc]                                            一、系统启动入口 简图中我们关注的重点：  1、core、main、late-start三种类型任务 2、与AMS类似的系统进程是通过servicemanager来获取IBinder对象，从而得到BpBinder，进而通过binder来通信的 3、普通应用间，是通过Service组件，来获取IBinder对象，从而得到BpBinder，进程通过binder来通信的；    &#x2F;system&#x2F;core&#x2F;init&#x2F;init.cpp&#x2F;system&#x2F;core&#x2F;rootdir&#x2F;init.rc  （一）init.rc：标识core、main、late_start类型服务 12345678910111213141516#6.0以前的源码//1、Linux以服务形式启动ServiceManagerservice servicemanager /system/bin/servicemanager   ...</div></div></div></a><a class="pagination-related" href="/2024/07/09/Framework%E7%B3%BB%E7%BB%9F%E7%AF%872-ActivityManagerService(AMS)%E5%90%AF%E5%8A%A8%E7%AF%87/" title="Framework系统篇2-ActivityManagerService(AMS)启动篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-09</div><div class="info-item-2">Framework系统篇2-ActivityManagerService(AMS)启动篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、前述在【Fw-系统启动流程】中已经知道，SystemServer进程的run()方法：  1、startBootstrapServices(); 启动引导服务：AMS、PMS、PowerManagerServic 2、startCoreServices(); 启动核心服务：BatteryService 3、startOtherServices(); 启动其他服务：如WMS  这其中还会调用startBootPhase() 方法，  1、传入不同的phase [feɪz]...</div></div></div></a><a class="pagination-related" href="/2024/07/10/Framework%E7%B3%BB%E7%BB%9F%E7%AF%873-ActivityManagerService(AMS)%EF%BC%9AActivity%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B&%E7%BB%98%E5%88%B6%E9%A1%BA%E5%BA%8F/" title="Framework系统篇3-ActivityManagerService(AMS)：Activity启动流程&amp;绘制顺序"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-10</div><div class="info-item-2">Framework系统篇3-ActivityManagerService(AMS)：Activity启动流程&amp;绘制顺序</div></div><div class="info-2"><div class="info-item-1">目录 前述、简述系统启动流程  简图 tips 1、为什么和zygoet通信是Socket呢？ 2、如果是多线程操作时，fork会有问题？     一、Activity启动流程  （1）简化启动App的Activity的流程 （2）Activity整体启动过程   二、Zygoet fork进程  （1）runSelectLoop轮询 （2）fork进程 （3）handleChildProc 调用新进程初始化方法 （4）ActivityThread.main   三、Activity绘制流程  完整流程图 （1）handleLaunchActivity：Window创建 1、onAttach： window创建(即PhoneWindow) WindowManagerImpl创建，并持有mGlobal(即WindowManagerGlobal)   2、onCreate：DecorView创建   （2）handleResumeActivity：mGlobal.add() 0、先执行onResume()回调 1、mGlobal.add(decorview) 并创建root...</div></div></div></a><a class="pagination-related" href="/2024/07/16/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)2%EF%BC%9A%E5%90%AF%E5%8A%A8%E7%AF%87/" title="Framework系统篇4-WindowManagerService(WMS)2：启动篇"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-16</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)2：启动篇</div></div><div class="info-2"><div class="info-item-1">[toc] 一、概述（1）WMS、Surface、SurfaceFlinger关系WMS核心关系：  Surface: 代表画布 WMS: 添加window的过程主要功能是添加Surface,管理所有的Surface布局,以及Z轴排序问题; SurfaceFinger: 将Surface按次序混合并显示到物理屏幕上;  （2）WMS整体认识  一、WMS端： WMS继承于IWindowManager.Stub, 作为Binder服务端; WMS的成员变量mSessions保存着所有的Session对象,Session继承于IWindowSession.Stub, 作为Binder服务端; 成员变量mPolicy: 实例对象为PhoneWindowManager,用于实现各种窗口相关的策略; 成员变量mChoreographer: 用于控制窗口动画,屏幕旋转等操作; 成员变量mDisplayContents: 记录一组DisplayContent对象,这个跟多屏输出相关; 成员变量mTokenMap: 保存所有的WindowToken对象;...</div></div></div></a><a class="pagination-related" href="/2024/07/14/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)1%EF%BC%9A%E6%95%B4%E4%BD%93%E8%AE%A4%E8%AF%86+%E6%A6%82%E5%BF%B5/" title="Framework系统篇4-WindowManagerService(WMS)1：整体认识+概念"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-14</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)1：整体认识+概念</div></div><div class="info-2"><div class="info-item-1">[toc] 一、WMS作用的整体认知  1、首先WMS在启动之后会设置给AMS，也就是AMS会持有WMS的实例，方便后续调用 2、WMS内部 通过WindowManager管理WindowState，即Window的状态等； 通过WindowAnimator处理动画   3、和InputManagerService进行交互，处理输入事件dispatchTouchEvent() 分发触摸事件 4、通过SurfaceControl去SurfaceFlinger中申请Surface空间，将Surface返回给App进程，并管理Surface画布，通过Z轴混合后上帧给SurfaceFlinger进行渲染；  二、WMS中成员变量的作用 一、WMS端： WMS继承于IWindowManager.Stub, 作为Binder服务端; WMS的成员变量mSessions保存着所有的Session对象,Session继承于IWindowSession.Stub, 作为Binder服务端; 成员变量mPolicy:...</div></div></div></a><a class="pagination-related" href="/2024/07/18/Framework%E7%B3%BB%E7%BB%9F%E7%AF%874-WindowManagerService(WMS)3%EF%BC%9A%E5%90%AF%E5%8A%A8%E7%AA%97%E5%8F%A3/" title="Framework系统篇4-WindowManagerService(WMS)3：启动窗口"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-07-18</div><div class="info-item-2">Framework系统篇4-WindowManagerService(WMS)3：启动窗口</div></div><div class="info-2"><div class="info-item-1">[toc] https://gityuan.com/2017/01/15/wms_starting_window/ 一、捋清一些概念（1）Activity、window、WindowState、windowToken、IApplicationToken的关系？1、IApplicationToken是进程独有的 在AMS启动Activity时startProcessLocked()，创建进程后attachApplication()时传给AMS的 是个Binder对象，用来跨进程通信的 会被存储在ActivityRecord.appToken中；  2、Activity和windowToken是一对多的 主窗口和 Activity：对于每个 Activity，当它的主窗口创建时，会有一个与该 Activity 相关的 windowToken。这个 windowToken 可以被认为与 Activity 一一对应，因为每个 Activity 的主窗口有且只有一个 windowToken。  子窗口（如 Dialog、PopupWindow 等）：一个 Activity...</div></div></div></a></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">王征</div><div class="author-info-description"></div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">41</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">18</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">3</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/IRVING18"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="mailto:ivring18@163.com" target="_blank" title="Email"><i class="fas fa-envelope" style="color: #4a7dbe;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content"><span>Android开发者迈向<span style="color:red; weight:bold" >高级Android开发</span>的直通车，总结了各大面试考点！<span></br><span>一个通人性的博主，码字不易，用爱发电。希望大家多多支持。</span><img width="250px" src="/img/wechat_pay.png"></div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#%E7%9B%AE%E5%BD%95"><span class="toc-number">1.</span> <span class="toc-text">目录</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E3%80%81SurfaceFlinger%E4%BB%8B%E7%BB%8D"><span class="toc-number">1.1.</span> <span class="toc-text">一、SurfaceFlinger介绍</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%EF%BC%881%EF%BC%89SurfaceFlinger%E7%9A%84%E4%BD%9C%E7%94%A8"><span class="toc-number">1.2.</span> <span class="toc-text">（1）SurfaceFlinger的作用</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%EF%BC%882%EF%BC%89SurfaceFlinger%E3%80%81Surface%E3%80%81Activity%E7%9A%84%E5%85%B3%E7%B3%BB"><span class="toc-number">1.3.</span> <span class="toc-text">（2）SurfaceFlinger、Surface、Activity的关系</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%8C%E3%80%81Surface%E5%9F%BA%E7%A1%80%E7%9F%A5%E8%AF%86"><span class="toc-number">1.4.</span> <span class="toc-text">二、Surface基础知识</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%881%EF%BC%89FrameBuffer"><span class="toc-number">1.4.1.</span> <span class="toc-text">（1）FrameBuffer</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%882%EF%BC%89PageFipping%EF%BC%9A%E5%8F%8C%E7%BC%93%E5%86%B2%E6%9C%BA%E5%88%B6"><span class="toc-number">1.4.2.</span> <span class="toc-text">（2）PageFipping：双缓冲机制</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%883%EF%BC%89BufferQueue"><span class="toc-number">1.4.3.</span> <span class="toc-text">（3）BufferQueue</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%89%E3%80%81Activity%E7%BB%98%E5%88%B6%E6%B5%81%E7%A8%8BperformTravesals-%E4%B8%AD%EF%BC%9ASurface%E7%9A%84%E5%88%9B%E5%BB%BA%E8%BF%87%E7%A8%8B"><span class="toc-number">1.5.</span> <span class="toc-text">三、Activity绘制流程performTravesals()中：Surface的创建过程</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%9B%9B%E3%80%81SurfaceFlinger-%E5%90%AF%E5%8A%A8%E8%BF%87%E7%A8%8B"><span class="toc-number">1.6.</span> <span class="toc-text">四、SurfaceFlinger 启动过程</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%881%EF%BC%89init-rc-core-class%E7%B1%BB%E5%9E%8B-main%E5%87%BD%E6%95%B0"><span class="toc-number">1.6.1.</span> <span class="toc-text">（1）init.rc core class类型 &#x3D;&gt; main函数</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%882%EF%BC%89new-SurfaceFlinger%E5%AF%B9%E8%B1%A1%E5%88%9B%E5%BB%BA"><span class="toc-number">1.6.2.</span> <span class="toc-text">（2）new SurfaceFlinger对象创建</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#1%E3%80%81SurfaceFlinger-onFirstRef"><span class="toc-number">1.6.2.1.</span> <span class="toc-text">1、SurfaceFlinger::onFirstRef()</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#2%E3%80%81MessageQueue-init-%E5%88%9D%E5%A7%8BHandler%E3%80%81%E9%98%9F%E5%88%97%E7%94%A8%E4%BA%8E%E5%A4%84%E7%90%86%E5%BC%82%E6%AD%A5%E6%B6%88%E6%81%AF"><span class="toc-number">1.6.2.2.</span> <span class="toc-text">2、MessageQueue::init() 初始Handler、队列用于处理异步消息</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%883%EF%BC%89SurfaceFlinger-init-%E5%88%9D%E5%A7%8B%E5%8C%96"><span class="toc-number">1.6.3.</span> <span class="toc-text">（3）SurfaceFlinger::init()初始化</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#1%E3%80%81%E5%88%9D%E5%A7%8B%E5%8C%96%E7%A1%AC%E4%BB%B6HWComposer%E5%AF%B9%E8%B1%A1%EF%BC%9A%E9%80%9A%E8%BF%87GPU%E5%90%88%E6%88%90%E5%9B%BE%E5%83%8F%EF%BC%9B%E6%B3%A8%E5%86%8CVSYNC%E4%BF%A1%E5%8F%B7%E5%9B%9E%E8%B0%83"><span class="toc-number">1.6.3.1.</span> <span class="toc-text">1、初始化硬件HWComposer对象：通过GPU合成图像；注册VSYNC信号回调</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#2%E3%80%81%E5%88%9D%E5%A7%8B%E5%8C%96%E9%9D%9E%E8%99%9A%E6%8B%9F%E6%98%BE%E7%A4%BA%E5%B1%8F%EF%BC%9A%E5%88%9B%E5%BB%BABufferQueue%EF%BC%8C%E7%94%A8%E4%BA%8E%E5%92%8C%E6%98%BE%E7%A4%BA%E8%AE%BE%E5%A4%87DisplayDevice%EF%BC%8C%E8%BF%9B%E8%A1%8C%E5%B1%95%E7%A4%BA%E5%9B%BE%E5%83%8F%E5%B1%95%E7%A4%BA%E7%9A%84%E8%BF%9E%E6%8E%A5"><span class="toc-number">1.6.3.2.</span> <span class="toc-text">2、初始化非虚拟显示屏：创建BufferQueue，用于和显示设备DisplayDevice，进行展示图像展示的连接</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#3%E3%80%81%E5%88%9B%E5%BB%BA%E4%B8%A4%E4%B8%AAEventThread-%E5%88%86%E5%8F%91VSYNC%E4%BF%A1%E5%8F%B7%EF%BC%9A%E7%BB%98%E5%88%B6-app-%E3%80%81%E7%BB%98%E5%88%B6-sf%E8%87%AA%E5%B7%B1"><span class="toc-number">1.6.3.3.</span> <span class="toc-text">3、创建两个EventThread 分发VSYNC信号：绘制(app)、绘制(sf自己)</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#4%E3%80%81%E8%AE%BE%E7%BD%AEEventThread%E7%BB%99MessageQueue%EF%BC%8C%E7%9B%91%E5%90%AC%E5%A4%84%E7%90%86VSYNC%E4%BF%A1%E5%8F%B7%E5%9B%9E%E8%B0%83"><span class="toc-number">1.6.3.4.</span> <span class="toc-text">4、设置EventThread给MessageQueue，监听处理VSYNC信号回调</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#5%E3%80%81startBootAnim%E5%BC%80%E6%9C%BA%E5%8A%A8%E7%94%BB"><span class="toc-number">1.6.3.5.</span> <span class="toc-text">5、startBootAnim开机动画</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%884%EF%BC%89SurfaceFlinger-run%E5%BE%AA%E7%8E%AF%E7%AD%89%E5%BE%85%E5%A4%84%E7%90%86%E6%B6%88%E6%81%AF"><span class="toc-number">1.6.4.</span> <span class="toc-text">（4）SurfaceFlinger.run循环等待处理消息</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%885%EF%BC%89%E5%9C%A8Android%E7%B3%BB%E7%BB%9F%E4%B8%AD%EF%BC%8CSurfaceFlinger%E6%9C%8D%E5%8A%A1%E4%B8%BB%E8%A6%81%E5%8C%85%E5%90%AB%E4%BB%A5%E4%B8%8B%E4%B8%89%E4%B8%AA%E7%BA%BF%E7%A8%8B%EF%BC%9A"><span class="toc-number">1.6.5.</span> <span class="toc-text">（5）在Android系统中，SurfaceFlinger服务主要包含以下三个线程：</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%94%E3%80%81SurfaceFlinger-VSYNC%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86%E6%B5%81%E7%A8%8B"><span class="toc-number">1.7.</span> <span class="toc-text">五、SurfaceFlinger VSYNC信号处理流程</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%880%EF%BC%89%E4%B8%BB%E6%97%B6%E5%BA%8F%E5%9B%BE%EF%BC%8C%E6%80%BB%E7%BB%93%E5%85%88%E8%A1%8C"><span class="toc-number">1.7.1.</span> <span class="toc-text"> （0）主时序图，总结先行</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%881%EF%BC%89HWComposer-hook-vsync-%E6%8E%A5%E5%8F%97%E5%BA%95%E5%B1%82%E7%A1%AC%E4%BB%B6VSYNC%E4%BF%A1%E5%8F%B7%E5%9B%9E%E8%B0%83"><span class="toc-number">1.7.2.</span> <span class="toc-text"> （1）HWComposer::hook_vsync() 接受底层硬件VSYNC信号回调</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%882%EF%BC%89SurfaceFlinger-onVSyncReceived-%E5%9B%9E%E8%B0%83%E5%88%B0SF%E6%96%B9%E6%B3%95"><span class="toc-number">1.7.3.</span> <span class="toc-text"> （2）SurfaceFlinger::onVSyncReceived() 回调到SF方法</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%883%EF%BC%89DispSync-addResyncSample-%E5%B0%86%E7%A1%AC%E4%BB%B6VSYNC%E5%A4%84%E7%90%86%EF%BC%8C%E5%B9%B6%E8%BD%AC%E5%8C%96%E6%88%90%E4%B8%80%E4%B8%AA%E8%99%9A%E6%8B%9F%E7%9A%84VSYNC%E4%BF%A1%E5%8F%B7%E6%BA%90%E3%80%82"><span class="toc-number">1.7.4.</span> <span class="toc-text"> （3）DispSync::addResyncSample() 将硬件VSYNC处理，并转化成一个虚拟的VSYNC信号源。</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%884%EF%BC%89DispSyncSource-onDispSyncEvent-%E4%BF%A1%E5%8F%B7%E6%BA%90%E5%AF%B9%E8%B1%A1%E6%89%BF%E6%8E%A5%E5%9B%9E%E8%B0%83%EF%BC%9B"><span class="toc-number">1.7.5.</span> <span class="toc-text"> （4）DispSyncSource::onDispSyncEvent() 信号源对象承接回调；</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%885%EF%BC%89EventThread-onVSyncEvent-%E5%9B%9E%E8%B0%83%E5%88%B0VSYNC%E4%BF%A1%E5%8F%B7%E5%88%86%E5%8F%91%E7%BA%BF%E7%A8%8B%EF%BC%9B"><span class="toc-number">1.7.6.</span> <span class="toc-text"> （5）EventThread::onVSyncEvent() 回调到VSYNC信号分发线程；</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%886%EF%BC%89DisplayEventReceiver-sendEvents-%E5%9B%9E%E8%B0%83%E7%BB%99MessageQueue"><span class="toc-number">1.7.7.</span> <span class="toc-text"> （6）DisplayEventReceiver::sendEvents() 回调给MessageQueue</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%887%EF%BC%89MessageQueue-cb-eventReceiver-%E5%88%86%E5%8F%91VYSNC%E4%BF%A1%E5%8F%B7"><span class="toc-number">1.7.8.</span> <span class="toc-text"> （7）MessageQueue::cb_eventReceiver() 分发VYSNC信号</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AD%E3%80%81SurfaceFlinger-%E7%BB%98%E5%88%B6%E6%B5%81%E7%A8%8B"><span class="toc-number">1.8.</span> <span class="toc-text">六、SurfaceFlinger 绘制流程</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%880%EF%BC%89%E6%80%BB%E7%BB%93%E5%85%88%E8%A1%8C"><span class="toc-number">1.8.1.</span> <span class="toc-text">（0）总结先行</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%881%EF%BC%89handleMessageRefresh-%E7%94%B1VSYNC%E4%BF%A1%E5%8F%B7%E8%A7%A6%E5%8F%91%E8%B0%83%E7%94%A8"><span class="toc-number">1.8.2.</span> <span class="toc-text">（1）handleMessageRefresh()由VSYNC信号触发调用</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%882%EF%BC%89preComposition%EF%BC%9A%E6%A0%B9%E6%8D%AE%E4%B8%8A%E6%AC%A1%E7%BB%98%E5%88%B6%E7%9A%84%E5%9B%BE%E5%B1%82%E4%B8%AD%E6%98%AF%E5%90%A6%E6%9C%89%E6%9B%B4%E6%96%B0%EF%BC%8C%E6%9D%A5%E5%86%B3%E5%AE%9A%E6%98%AF%E5%90%A6%E6%89%A7%E8%A1%8Cinvalidate%E8%BF%87%E7%A8%8B%EF%BC%9B"><span class="toc-number">1.8.3.</span> <span class="toc-text">（2）preComposition：根据上次绘制的图层中是否有更新，来决定是否执行invalidate过程；</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%883%EF%BC%89rebuildLayerStacks%EF%BC%9A%E9%87%8D%E5%BB%BA%E6%AF%8F%E4%B8%AA%E6%98%BE%E7%A4%BA%E5%B1%8F%E7%9A%84%E6%89%80%E6%9C%89%E5%8F%AF%E8%A7%81Layer%E5%88%97%E8%A1%A8%EF%BC%9B"><span class="toc-number">1.8.4.</span> <span class="toc-text">（3）rebuildLayerStacks：重建每个显示屏的所有可见Layer列表；</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%884%EF%BC%89setUpHWComposer%EF%BC%9A%E6%9B%B4%E6%96%B0HWComposer%E7%9A%84%E5%9B%BE%E5%B1%82"><span class="toc-number">1.8.5.</span> <span class="toc-text">（4）setUpHWComposer：更新HWComposer的图层</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%885%EF%BC%89doComposition%EF%BC%9A%E5%90%88%E6%88%90%E6%89%80%E6%9C%89%E5%9B%BE%E5%B1%82%E7%9A%84%E5%9B%BE%E5%83%8F"><span class="toc-number">1.8.6.</span> <span class="toc-text">（5）doComposition：合成所有图层的图像</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%886%EF%BC%89postComposition%EF%BC%9A%E5%9B%9E%E8%B0%83%E6%AF%8F%E4%B8%AAlayer%E7%9A%84onPostComposition%E3%80%82"><span class="toc-number">1.8.7.</span> <span class="toc-text">（6）postComposition：回调每个layer的onPostComposition。</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%83%E3%80%81Choreography%E6%8E%A5%E6%94%B6SurfaceFlinger%E7%9A%84VSYNC%E4%BF%A1%E5%8F%B7"><span class="toc-number">1.9.</span> <span class="toc-text">七、Choreography接收SurfaceFlinger的VSYNC信号</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AB%E3%80%81%E6%80%BB%E7%BB%93"><span class="toc-number">1.10.</span> <span class="toc-text">八、总结</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%881%EF%BC%89%E8%AE%B2%E8%AE%B2SurfaceFlinger%E5%9C%A8Activity%E7%BB%98%E5%88%B6%E8%BF%87%E7%A8%8B%E7%9A%84%E4%BD%9C%E7%94%A8%EF%BC%9F"><span class="toc-number">1.10.1.</span> <span class="toc-text">（1）讲讲SurfaceFlinger在Activity绘制过程的作用？</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#1%E3%80%81%E4%BB%8EActivity%E5%90%AF%E5%8A%A8%E5%BC%80%E5%A7%8B%E8%AE%B2%EF%BC%9A"><span class="toc-number">1.10.1.1.</span> <span class="toc-text">1、从Activity启动开始讲：</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#2%E3%80%81%E8%87%B3%E6%AD%A4%E5%90%AF%E5%8A%A8%E5%B7%B2%E7%BB%8F%E8%AE%B2%E5%AE%8C%EF%BC%8C%E5%8D%95%E7%8B%AC%E5%90%A7draw%E6%B5%81%E7%A8%8B%E8%AF%B4%E4%B8%8B%EF%BC%9A"><span class="toc-number">1.10.1.2.</span> <span class="toc-text">2、至此启动已经讲完，单独吧draw流程说下：</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%EF%BC%882%EF%BC%89BufferQueue%E6%80%8E%E4%B9%88%E4%BF%9D%E9%9A%9C%E7%BA%BF%E7%A8%8B%E5%AE%89%E5%85%A8%E7%9A%84%E5%91%A2"><span class="toc-number">1.10.2.</span> <span class="toc-text"> （2）BufferQueue怎么保障线程安全的呢?</span></a></li></ol></li></ol></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/20/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service%EF%BC%9AstartService%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-Service：startService源码分析">Framework四大组件篇-Service：startService源码分析</a><time datetime="2024-09-20T07:40:47.000Z" title="发表于 2024-09-20 15:40:47">2024-09-20</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/17/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service%EF%BC%9AbindService%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-Service：bindService源码分析">Framework四大组件篇-Service：bindService源码分析</a><time datetime="2024-09-17T07:40:36.000Z" title="发表于 2024-09-17 15:40:36">2024-09-17</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/16/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-Service1%E4%BD%BF%E7%94%A8%E7%AF%87/" title="Framework四大组件篇-Service1使用篇">Framework四大组件篇-Service1使用篇</a><time datetime="2024-09-16T07:40:35.000Z" title="发表于 2024-09-16 15:40:35">2024-09-16</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/09/07/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-ContentProvider%E5%90%AF%E5%8A%A8%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-ContentProvider启动源码分析">Framework四大组件篇-ContentProvider启动源码分析</a><time datetime="2024-09-07T07:39:36.000Z" title="发表于 2024-09-07 15:39:36">2024-09-07</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2024/08/30/Framework%E5%9B%9B%E5%A4%A7%E7%BB%84%E4%BB%B6%E7%AF%87-BroadCast%E5%8E%9F%E7%90%86%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="Framework四大组件篇-BroadCast原理源码分析">Framework四大组件篇-BroadCast原理源码分析</a><time datetime="2024-08-30T07:40:05.000Z" title="发表于 2024-08-30 15:40:05">2024-08-30</time></div></div></div></div></div></div></main><footer id="footer" style="background-image: url(/img/bg.png);"><div id="footer-wrap"><div class="copyright">&copy;2024 By 王征</div><div class="footer_custom_text"><a href=""><img class="icp-icon" src="/img/avatar.jpg"><span>一个通人性的博主</span></a></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js"></script><script src="/js/main.js"></script><div class="js-pjax"></div><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></div></body></html>
